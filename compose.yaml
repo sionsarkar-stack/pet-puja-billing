@@ -1,0 +1,20 @@
+services:
+  database:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pet_puja}
+      POSTGRES_USER: ${POSTGRES_USER:-pet_puja}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pet_puja_local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pet_puja} -d ${POSTGRES_DB:-pet_puja}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
