@@ -21,7 +21,10 @@ services:
       DB_URL: jdbc:postgresql://database:5432/${POSTGRES_DB}
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
+      OWNER_USERNAME: ${OWNER_USERNAME}
+      OWNER_PASSWORD: ${OWNER_PASSWORD}
       PORT: 8080
+      SESSION_COOKIE_SECURE: "true"
     depends_on:
       database:
         condition: service_healthy

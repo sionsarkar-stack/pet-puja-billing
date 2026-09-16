@@ -44,5 +44,38 @@ public class BillLine {
 
 	protected BillLine() {
 	}
-}
 
+	private BillLine(Bill bill, MenuItem menuItem, int quantity, BigDecimal unitPrice, BigDecimal lineTotal) {
+		this.bill = bill;
+		this.itemName = menuItem.getName();
+		this.lineTotal = lineTotal;
+		this.menuItem = menuItem;
+		this.quantity = quantity;
+		this.unitPrice = unitPrice;
+	}
+
+	public static BillLine create(Bill bill, MenuItem menuItem, int quantity, BigDecimal unitPrice,
+			BigDecimal lineTotal) {
+		return new BillLine(bill, menuItem, quantity, unitPrice, lineTotal);
+	}
+
+	public String getItemName() {
+		return itemName;
+	}
+
+	public Long getMenuItemId() {
+		return menuItem == null ? null : menuItem.getId();
+	}
+
+	public int getQuantity() {
+		return quantity;
+	}
+
+	public BigDecimal getUnitPrice() {
+		return unitPrice;
+	}
+
+	public BigDecimal getLineTotal() {
+		return lineTotal;
+	}
+}

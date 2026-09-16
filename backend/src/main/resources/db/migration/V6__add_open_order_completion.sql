@@ -1,0 +1,2 @@
+ALTER TABLE bill
+    ADD COLUMN completed_at TIMESTAMPTZ;
