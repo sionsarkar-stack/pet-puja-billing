@@ -6,8 +6,8 @@ import org.springframework.validation.annotation.Validated;
 import jakarta.validation.constraints.NotBlank;
 
 @Validated
-@ConfigurationProperties(prefix = "app.auth.owner")
-public record OwnerCredentialsProperties(
+@ConfigurationProperties(prefix = "app.auth.captain")
+public record CaptainCredentialsProperties(
         @NotBlank String username,
         @NotBlank String password) {
 }

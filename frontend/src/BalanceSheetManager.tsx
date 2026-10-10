@@ -14,6 +14,7 @@ import {
     type Expense,
     type PaidOrder,
 } from './financial'
+import { useRestaurantConfiguration } from './RestaurantConfiguration'
 
 type ExportMessage = {
     text: string
@@ -42,6 +43,14 @@ function getCurrentDateEnd() {
     const currentDate = new Date()
     currentDate.setHours(23, 59, 59, 999)
     return currentDate
+}
+
+function getRestaurantFileName(restaurantName: string) {
+    return restaurantName
+        .toLocaleLowerCase('en-IN')
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'restaurant'
 }
 
 function formatDateInput(value: string) {
@@ -98,6 +107,7 @@ function getRefundEntries(paidOrders: PaidOrder[]): RefundEntry[] {
 }
 
 function BalanceSheetManager() {
+    const { restaurantName } = useRestaurantConfiguration()
     const [balanceSheet, setBalanceSheet] = useState<BalanceSheet | null>(null)
     const [paidOrders, setPaidOrders] = useState<PaidOrder[]>([])
     const [expenses, setExpenses] = useState<Expense[]>([])
@@ -167,7 +177,7 @@ function BalanceSheetManager() {
         const report = new jsPDF({ format: 'a4', unit: 'pt' })
 
         report.setFontSize(20)
-        report.text('Pet Puja Billing', 48, 56)
+        report.text(restaurantName, 48, 56)
         report.setFontSize(14)
         report.text('Balance sheet', 48, 82)
         report.setFontSize(10)
@@ -239,7 +249,7 @@ function BalanceSheetManager() {
             }
         }
 
-        report.save(`pet-puja-balance-sheet-${dateRange.filenameSuffix}.pdf`)
+        report.save(`${getRestaurantFileName(restaurantName)}-balance-sheet-${dateRange.filenameSuffix}.pdf`)
         setExportMessage({ text: 'Balance sheet PDF exported.', tone: 'success' })
     }
 

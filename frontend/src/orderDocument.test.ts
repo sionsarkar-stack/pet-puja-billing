@@ -35,6 +35,7 @@ describe('createOrderDocument', () => {
             paymentMethod: 'CASH',
             paymentStatus: 'PAID',
             reference: 'PP-123',
+            restaurantName: 'The Third Break',
             seatingName: 'Table 3',
             total: 400,
         })
@@ -45,6 +46,8 @@ describe('createOrderDocument', () => {
         expect(receiptText).toContain('Receipt no. PP-123')
         expect(receiptText).toContain('Payment method: Cash')
         expect(receiptText).toContain('Payment received. Thank you.')
+        expect(receiptText).toContain('THE THIRD BREAK')
+        expect(receiptText).toContain('Thank you for dining with The Third Break.')
         expect(receiptText).toContain('INR 400.00')
     })
 })

@@ -44,6 +44,10 @@ const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
 })
 
+type MenuManagerProps = {
+    canManage?: boolean
+}
+
 function isMenuItem(value: unknown): value is MenuItem {
     return typeof value === 'object'
         && value !== null
@@ -90,7 +94,7 @@ function validateMenuDraft(menuDraft: MenuDraft): { error: string } | { payload:
     }
 }
 
-function MenuManager() {
+function MenuManager({ canManage = true }: MenuManagerProps) {
     const [menuItems, setMenuItems] = useState<MenuItem[]>([])
     const [draft, setDraft] = useState<MenuDraft>(emptyDraft)
     const [editingMenuItemId, setEditingMenuItemId] = useState<number | null>(null)
@@ -286,13 +290,13 @@ function MenuManager() {
             <header className="menu-page-heading">
                 <div>
                     <p className="eyebrow">Menu</p>
-                    <h1>Menu editor</h1>
+                    <h1>{canManage ? 'Menu editor' : 'Menu'}</h1>
                 </div>
                 <p>Keep the dishes and prices at the counter current.</p>
             </header>
 
             <div className="menu-layout">
-                <form className="menu-editor" noValidate onSubmit={handleSubmit}>
+                {canManage && <form className="menu-editor" noValidate onSubmit={handleSubmit}>
                     <div className="menu-editor-heading">
                         <p className="eyebrow">New item</p>
                         <h2>Add a dish</h2>
@@ -374,7 +378,7 @@ function MenuManager() {
                             {isSaving ? 'Saving...' : 'Add menu item'}
                         </button>
                     </div>
-                </form>
+                </form>}
 
                 <section aria-labelledby="current-menu-heading" className="menu-list">
                     <header className="menu-list-heading">
@@ -399,7 +403,7 @@ function MenuManager() {
                                         <th scope="col">Description</th>
                                         <th scope="col">Discount</th>
                                         <th scope="col">Price</th>
-                                        <th scope="col">Actions</th>
+                                        {canManage && <th scope="col">Actions</th>}
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -461,7 +465,7 @@ function MenuManager() {
                                                         />
                                                     ) : currencyFormatter.format(menuItem.price)}
                                                 </td>
-                                                <td>
+                                                {canManage && <td>
                                                     <div className="menu-item-actions">
                                                         {isEditing ? (
                                                             <>
@@ -501,7 +505,7 @@ function MenuManager() {
                                                             {isDeleting ? 'Deleting...' : 'Delete'}
                                                         </button>
                                                     </div>
-                                                </td>
+                                                </td>}
                                             </tr>
                                         )
                                     })}

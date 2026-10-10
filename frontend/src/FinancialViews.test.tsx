@@ -1,6 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { RestaurantConfigurationContext } from './RestaurantConfiguration'
 import BalanceSheetManager from './BalanceSheetManager'
 import ExpensesManager from './ExpensesManager'
 import HistoryManager from './HistoryManager'
@@ -205,7 +206,11 @@ describe('financial views', () => {
             .mockResolvedValueOnce(jsonResponse([paidOrder]))
             .mockResolvedValueOnce(jsonResponse([expense]))
 
-        render(<BalanceSheetManager />)
+        render(
+            <RestaurantConfigurationContext.Provider value={{ restaurantName: 'The Third Break', upiVpa: '' }}>
+                <BalanceSheetManager />
+            </RestaurantConfigurationContext.Provider>,
+        )
 
         await screen.findByRole('heading', { name: 'Financial position' })
         const revenueMetric = screen.getByText('Revenue').closest('section')
@@ -267,28 +272,33 @@ describe('financial views', () => {
             .mockResolvedValueOnce(jsonResponse([olderExpense, todayExpense]))
         const user = userEvent.setup()
 
-        render(<BalanceSheetManager />)
+        render(
+            <RestaurantConfigurationContext.Provider value={{ restaurantName: 'The Third Break', upiVpa: '' }}>
+                <BalanceSheetManager />
+            </RestaurantConfigurationContext.Provider>,
+        )
 
         await screen.findByRole('heading', { name: 'Financial position' })
         await user.click(screen.getByRole('button', { name: 'Export PDF' }))
-        expect(pdf.document.save).toHaveBeenLastCalledWith('pet-puja-balance-sheet-all-records.pdf')
+        expect(pdf.document.save).toHaveBeenLastCalledWith('the-third-break-balance-sheet-all-records.pdf')
+        expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('The Third Break')
 
         vi.clearAllMocks()
         await user.type(screen.getByLabelText('To date'), yesterday)
         await user.click(screen.getByRole('button', { name: 'Export PDF' }))
         expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('INR 200.00')
-        expect(pdf.document.save).toHaveBeenLastCalledWith(`pet-puja-balance-sheet-start-to-${yesterday}.pdf`)
+        expect(pdf.document.save).toHaveBeenLastCalledWith(`the-third-break-balance-sheet-start-to-${yesterday}.pdf`)
 
         vi.clearAllMocks()
         await user.clear(screen.getByLabelText('To date'))
         await user.type(screen.getByLabelText('From date'), today)
         await user.click(screen.getByRole('button', { name: 'Export PDF' }))
         expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('INR 400.00')
-        expect(pdf.document.save).toHaveBeenLastCalledWith(`pet-puja-balance-sheet-from-${today}-to-current-date.pdf`)
+        expect(pdf.document.save).toHaveBeenLastCalledWith(`the-third-break-balance-sheet-from-${today}-to-current-date.pdf`)
 
         vi.clearAllMocks()
         await user.type(screen.getByLabelText('To date'), today)
         await user.click(screen.getByRole('button', { name: 'Export PDF' }))
-        expect(pdf.document.save).toHaveBeenLastCalledWith(`pet-puja-balance-sheet-${today}-to-${today}.pdf`)
+        expect(pdf.document.save).toHaveBeenLastCalledWith(`the-third-break-balance-sheet-${today}-to-${today}.pdf`)
     })
 })

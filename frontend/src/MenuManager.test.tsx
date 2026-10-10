@@ -116,6 +116,26 @@ describe('MenuManager', () => {
         expect(screen.getByText('1 item')).toBeInTheDocument()
     })
 
+    it('shows saved menu values without mutation controls when read-only', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([{
+            id: 1,
+            name: 'Masala Dosa',
+            description: 'Crisp dosa',
+            discountApplied: 10,
+            price: 180,
+        }]))
+
+        render(<MenuManager canManage={false} />)
+
+        expect(await screen.findByRole('heading', { name: 'Menu' })).toBeInTheDocument()
+        expect(screen.getByText('Masala Dosa')).toBeInTheDocument()
+        expect(screen.getByRole('table', { name: 'Saved menu items' })).toBeInTheDocument()
+        expect(screen.queryByLabelText('Name')).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Edit Masala Dosa' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Delete Masala Dosa' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('columnheader', { name: 'Actions' })).not.toBeInTheDocument()
+    })
+
     it('deletes a saved menu item', async () => {
         const menuItem = {
             id: 1,

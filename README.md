@@ -1,23 +1,25 @@
 # Pet Puja Billing
 
-A deliberately small, production-minded base for a single-owner restaurant billing and management system. The current scope provides a React application shell, Spring Boot API, database-backed menu editing, and one-host deployment setup. Billing workflows, balance sheets, and stock checks will be added incrementally.
+A deliberately small, production-minded restaurant billing and management system with separate Admin and Captain access. The current scope provides a React application shell, Spring Boot API, database-backed menu editing, and one-host deployment setup.
 
 ## Stack
 
 - React 19, TypeScript, and Vite
-- Java 21 and Spring Boot 4
+- Java 25 and Spring Boot 4
 - H2 file database for local development, PostgreSQL 18 for deployment
 - Flyway migrations and nginx for one-host deployment
 
 ## Local development
 
-Prerequisites: Java 21 and Node.js 24 LTS or newer. Docker is not required.
+Prerequisites: Java 25 and Node.js 24 LTS or newer. Docker is not required.
 
 ```bash
 # Terminal 1: API
 cd backend
-export OWNER_USERNAME='set-your-owner-username'
-export OWNER_PASSWORD='set-a-long-unique-password'
+export ADMIN_USERNAME='set-your-admin-username'
+export ADMIN_PASSWORD='set-a-long-unique-admin-password'
+export CAPTAIN_USERNAME='set-your-captain-username'
+export CAPTAIN_PASSWORD='set-a-different-long-captain-password'
 ./mvnw -Dspring-boot.run.profiles=local spring-boot:run
 
 # Terminal 2: web app
@@ -78,7 +80,7 @@ This setup is intended for one small AWS EC2 instance with one Elastic IP. Insta
 
 ```bash
 cp .env.example .env
-# Set long, unique POSTGRES_PASSWORD and OWNER_PASSWORD values in .env.
+# Set long, unique database, Admin, and Captain passwords in .env.
 docker compose -f compose.prod.yaml up -d --build
 curl http://localhost/api/health
 ```
@@ -93,15 +95,20 @@ Persist and back up the `postgres-data` Docker volume. Terminate TLS on nginx af
 | `DB_USERNAME` | Database user | `pet_puja` |
 | `DB_PASSWORD` | Database password | `pet_puja_local` for local development only |
 | `spring.profiles.active=local` | File-backed H2 database | Recommended for local no-Docker development |
-| `OWNER_USERNAME` | Single owner login username | Required |
-| `OWNER_PASSWORD` | Single owner login password | Required |
+| `ADMIN_USERNAME` | Admin login username; grants every workspace and menu management | Required |
+| `ADMIN_PASSWORD` | Admin login password | Required |
+| `CAPTAIN_USERNAME` | Captain login username; grants Table, read-only Menu, and History | Required |
+| `CAPTAIN_PASSWORD` | Captain login password | Required |
+| `RESTAURANT_NAME` | Public restaurant name shown in the app, documents, and payment QR | `Restaurant` |
+| `UPI_VPA` | Public UPI payee address embedded in payment QR codes | Optional |
 | `PORT` | Backend HTTP port | `8080` |
 | `SESSION_COOKIE_SECURE` | Send the login session only over HTTPS | `false` locally, `true` in production Compose |
 | `VITE_API_BASE_URL` | Optional browser API origin | same origin |
 
 Secrets belong in `.env` on the host or an external secret store; `.env` is ignored by git.
+Set `RESTAURANT_NAME` and `UPI_VPA` in the backend environment file to control app branding and UPI QR details without rebuilding the frontend. Restart the backend after changing either value.
+For existing deployments, move the current owner username and password values to `ADMIN_USERNAME` and `ADMIN_PASSWORD`, then set a separate Captain username and password before restarting the backend.
 
 ## Current boundaries
 
-Flyway owns the schema for both local H2 and deployed PostgreSQL databases. Menu items persist a name, description, discount percentage, and price. Authentication uses one owner username and password supplied through `OWNER_USERNAME` and `OWNER_PASSWORD`; the server stores its authenticated session in an HTTP-only cookie.
-
+Flyway owns the schema for both local H2 and deployed PostgreSQL databases. Menu items persist a name, description, discount percentage, and price. Authentication mode is inferred from the matching Admin or Captain credentials and stored in the HTTP-only session. Admin can access every workspace and mutate the menu. Captain can use Table and History and view the menu without mutation controls; the backend independently rejects Captain requests to Admin-only APIs.

@@ -1,0 +1,1 @@
+export type UserMode = 'ADMIN' | 'CAPTAIN'

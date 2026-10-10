@@ -55,16 +55,17 @@ public class AuthController {
         SecurityContextHolder.setContext(securityContext);
         securityContextRepository.saveContext(securityContext, request, response);
 
-        return ResponseEntity.ok(new LoginResponse(authentication.getName()));
+        return ResponseEntity.ok(new LoginResponse(authentication.getName(), getUserMode(authentication)));
     }
 
     @GetMapping("/session")
     public SessionResponse session(Authentication authentication) {
         if (authentication == null || authentication instanceof AnonymousAuthenticationToken) {
-            return new SessionResponse(false, null);
+            return new SessionResponse(false, null, null);
         }
 
-        return new SessionResponse(authentication.isAuthenticated(), authentication.getName());
+        return new SessionResponse(authentication.isAuthenticated(), authentication.getName(),
+                getUserMode(authentication));
     }
 
     @PostMapping("/logout")
@@ -88,9 +89,16 @@ public class AuthController {
             @NotBlank @Size(max = 256) String password) {
     }
 
-    public record LoginResponse(String username) {
+    private UserMode getUserMode(Authentication authentication) {
+        return authentication.getAuthorities().stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"))
+                        ? UserMode.ADMIN
+                        : UserMode.CAPTAIN;
     }
 
-    public record SessionResponse(boolean authenticated, String username) {
+    public record LoginResponse(String username, UserMode mode) {
+    }
+
+    public record SessionResponse(boolean authenticated, String username, UserMode mode) {
     }
 }

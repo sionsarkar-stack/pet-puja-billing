@@ -1,7 +1,10 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { jsPDF } from 'jspdf'
+import { QRCodeSVG } from 'qrcode.react'
 import ConfirmationDialog from './ConfirmationDialog'
 import { createOrderDocument } from './orderDocument'
+import { useRestaurantConfiguration } from './RestaurantConfiguration'
+import { createUpiPaymentUri } from './upiPayment'
 import {
     apiBaseUrl,
     currencyFormatter,
@@ -174,6 +177,7 @@ type TableManagerProps = {
 }
 
 function TableManager({ isActive = true }: TableManagerProps) {
+    const { restaurantName, upiVpa } = useRestaurantConfiguration()
     const paidReceiptFrameRef = useRef<HTMLIFrameElement>(null)
     const [menuItems, setMenuItems] = useState<MenuItem[]>([])
     const [isLoading, setIsLoading] = useState(true)
@@ -188,6 +192,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
     const [lastOrderSave, setLastOrderSave] = useState<OrderSaveStatus | null>(null)
     const [paymentMethodInProgress, setPaymentMethodInProgress] = useState<PaymentMethod | null>(null)
     const [pendingPaymentMethod, setPendingPaymentMethod] = useState<PaymentMethod | null>(null)
+    const [upiQrSeatingId, setUpiQrSeatingId] = useState<string | null>(null)
     const [lastPaidSeatingId, setLastPaidSeatingId] = useState<string | null>(null)
     const [lastPaidOrder, setLastPaidOrder] = useState<PaidOrder | null>(null)
     const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null)
@@ -472,7 +477,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
             invoice.line(pageLeft, footerY - 12, pageRight, footerY - 12)
             invoice.setFontSize(8)
             invoice.setTextColor(91, 102, 92)
-            invoice.text('Thank you for dining with Pet Puja.', pageLeft, footerY)
+            invoice.text(`Thank you for dining with ${restaurantName}.`, pageLeft, footerY)
             invoice.text('Computer-generated invoice', pageRight, footerY, { align: 'right' })
         }
 
@@ -492,7 +497,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
         invoice.rect(pageLeft, 48, pageRight - pageLeft, 74, 'F')
         invoice.setTextColor(255, 255, 255)
         invoice.setFontSize(22)
-        invoice.text('PET PUJA', 64, 80)
+        invoice.text(restaurantName.toLocaleUpperCase('en-IN'), 64, 80)
         invoice.setFontSize(9)
         invoice.text('RESTAURANT BILLING', 64, 98)
         invoice.setFontSize(18)
@@ -522,7 +527,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                 invoice.addPage()
                 invoice.setFontSize(10)
                 invoice.setTextColor(42, 48, 43)
-                invoice.text('PET PUJA | Order invoice continued', pageLeft, 56)
+                invoice.text(`${restaurantName.toLocaleUpperCase('en-IN')} | Order invoice continued`, pageLeft, 56)
                 invoice.text(invoiceReference, pageRight, 56, { align: 'right' })
                 cursorY = 76
                 addTableHeader(cursorY)
@@ -546,7 +551,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
             invoice.addPage()
             invoice.setFontSize(10)
             invoice.setTextColor(42, 48, 43)
-            invoice.text('PET PUJA | Invoice summary', pageLeft, 56)
+            invoice.text(`${restaurantName.toLocaleUpperCase('en-IN')} | Invoice summary`, pageLeft, 56)
             invoice.text(invoiceReference, pageRight, 56, { align: 'right' })
             cursorY = 82
         }
@@ -577,6 +582,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
             paymentMethod: lastPaidOrder.paymentMethod,
             paymentStatus: 'PAID',
             reference: lastPaidOrder.billNumber,
+            restaurantName,
             seatingName: lastPaidOrder.tableName,
             total: lastPaidOrder.total,
         })))
@@ -645,6 +651,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
             setIsPaidReceiptReadyToPrint(false)
             setLastPaidSeatingId(selectedSeating.id)
             setLastPaidOrder(paidOrder)
+            setUpiQrSeatingId(null)
             setMessage({
                 tone: 'success',
                 text: `${selectedSeating.name} paid by ${getPaymentMethodLabel(paymentMethod).toLowerCase()}: ${currencyFormatter.format(paidOrder.total)}.`,
@@ -986,7 +993,19 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                     {isOrderCompleted && (
                                         <div className="table-payment-actions">
                                             <p>Settle this order</p>
-                                            <div>
+                                            <div className="table-payment-buttons">
+                                                {upiVpa.trim() !== '' && (
+                                                    <button
+                                                        className="table-payment-upi"
+                                                        disabled={isOrderActionInProgress}
+                                                        onClick={() => setUpiQrSeatingId((currentId) => (
+                                                            currentId === selectedSeating.id ? null : selectedSeating.id
+                                                        ))}
+                                                        type="button"
+                                                    >
+                                                        {upiQrSeatingId === selectedSeating.id ? 'Hide UPI QR' : 'Show UPI QR'}
+                                                    </button>
+                                                )}
                                                 <button
                                                     className="table-payment-cash"
                                                     disabled={isOrderActionInProgress}
@@ -1004,6 +1023,22 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                                     {paymentMethodInProgress === 'ONLINE' ? 'Recording online payment...' : 'Paid online'}
                                                 </button>
                                             </div>
+                                            {upiVpa.trim() !== '' && upiQrSeatingId === selectedSeating.id && (
+                                                <section aria-labelledby="table-upi-qr-heading" className="table-upi-qr">
+                                                    <QRCodeSVG
+                                                        includeMargin
+                                                        size={208}
+                                                        title="UPI payment QR"
+                                                        value={createUpiPaymentUri(selectedOrderTotal, selectedSeating.name, restaurantName, upiVpa)}
+                                                    />
+                                                    <div>
+                                                        <p className="eyebrow">UPI payment</p>
+                                                        <h3 id="table-upi-qr-heading">Scan to pay {currencyFormatter.format(selectedOrderTotal)}</h3>
+                                                        <p>Pay to {upiVpa}</p>
+                                                        <p>After the payer confirms in their UPI app, select “Paid online” to record payment.</p>
+                                                    </div>
+                                                </section>
+                                            )}
                                         </div>
                                     )}
                                 </>

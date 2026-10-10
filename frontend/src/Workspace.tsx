@@ -1,4 +1,6 @@
 import { type KeyboardEvent, useRef, useState } from 'react'
+import { getRestaurantMark, useRestaurantConfiguration } from './RestaurantConfiguration'
+import type { UserMode } from './userMode'
 import BalanceSheetManager from './BalanceSheetManager'
 import BackupManager from './BackupManager'
 import DailyClosingManager from './DailyClosingManager'
@@ -9,6 +11,7 @@ import TableManager from './TableManager'
 
 type WorkspaceProps = {
     isLoggingOut: boolean
+    mode: UserMode
     onLogout: () => Promise<void>
     username: string
 }
@@ -25,10 +28,14 @@ const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: 'backup', label: 'Backup' },
 ]
 
-function Workspace({ isLoggingOut, onLogout, username }: WorkspaceProps) {
+function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
+    const { restaurantName } = useRestaurantConfiguration()
     const [activeTab, setActiveTab] = useState<WorkspaceTab>('table')
     const [hasOpenedTable, setHasOpenedTable] = useState(true)
     const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
+    const visibleTabs = mode === 'ADMIN'
+        ? tabs
+        : tabs.filter((tab) => tab.id === 'table' || tab.id === 'menu' || tab.id === 'history')
 
     function selectTab(tab: WorkspaceTab) {
         setActiveTab(tab)
@@ -45,8 +52,8 @@ function Workspace({ isLoggingOut, onLogout, username }: WorkspaceProps) {
             ? 0
             : event.key === 'End'
                 ? tabs.length - 1
-                : (tabIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-        const nextTab = tabs[nextTabIndex]
+                : (tabIndex + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length
+        const nextTab = visibleTabs[nextTabIndex]
 
         selectTab(nextTab.id)
         tabButtonRefs.current[nextTabIndex]?.focus()
@@ -55,13 +62,14 @@ function Workspace({ isLoggingOut, onLogout, username }: WorkspaceProps) {
     return (
         <main className="workspace-page">
             <header className="workspace-header">
-                <a className="brand" href="/" aria-label="Pet Puja Billing home">
-                    <span className="brand-mark">PP</span>
-                    <span>Pet Puja Billing</span>
+                <a className="brand" href="/" aria-label={`${restaurantName} home`}>
+                    <span className="brand-mark">{getRestaurantMark(restaurantName)}</span>
+                    <span>{restaurantName}</span>
                 </a>
 
                 <div className="workspace-user">
                     <span>{username}</span>
+                    <span className="workspace-mode">{mode === 'ADMIN' ? 'Admin mode' : 'Captain mode'}</span>
                     <button disabled={isLoggingOut} onClick={onLogout} type="button">
                         {isLoggingOut ? 'Signing out...' : 'Sign out'}
                     </button>
@@ -70,7 +78,7 @@ function Workspace({ isLoggingOut, onLogout, username }: WorkspaceProps) {
 
             <div className="workspace-shell">
                 <nav aria-label="Restaurant management" className="workspace-tabs" role="tablist">
-                    {tabs.map((tab, index) => (
+                    {visibleTabs.map((tab, index) => (
                         <button
                             aria-controls={`panel-${tab.id}`}
                             aria-selected={activeTab === tab.id}
@@ -97,7 +105,7 @@ function Workspace({ isLoggingOut, onLogout, username }: WorkspaceProps) {
                         id="panel-menu"
                         role="tabpanel"
                     >
-                        <MenuManager />
+                        <MenuManager canManage={mode === 'ADMIN'} />
                     </section>
                 )}
 

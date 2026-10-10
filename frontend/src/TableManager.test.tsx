@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { RestaurantConfigurationContext } from './RestaurantConfiguration'
 import TableManager from './TableManager'
+import { createUpiPaymentUri } from './upiPayment'
 
 const pdf = vi.hoisted(() => {
     const document = {
@@ -40,6 +42,45 @@ describe('TableManager', () => {
         vi.clearAllMocks()
         vi.restoreAllMocks()
         vi.unstubAllGlobals()
+    })
+
+    it('creates a UPI payment URI with the exact amount and seating reference', () => {
+        const paymentUri = new URL(createUpiPaymentUri(302, 'Table 4', 'The Third Break', 'sionsarkar@okicici'))
+
+        expect(paymentUri.protocol).toBe('upi:')
+        expect(paymentUri.hostname).toBe('pay')
+        expect(paymentUri.searchParams.get('pa')).toBe('sionsarkar@okicici')
+        expect(paymentUri.searchParams.get('am')).toBe('302.00')
+        expect(paymentUri.searchParams.get('cu')).toBe('INR')
+        expect(paymentUri.searchParams.get('pn')).toBe('The Third Break')
+        expect(paymentUri.searchParams.get('tn')).toBe('The Third Break - Table 4')
+    })
+
+    it('shows a UPI QR for the completed order without recording payment', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse([]))
+            .mockResolvedValueOnce(jsonResponse([{
+                completed: true,
+                lines: [{ itemName: 'Paneer Tikka', lineTotal: 302, menuItemId: 1, quantity: 1, unitPrice: 302 }],
+                tableName: 'Table 1',
+                total: 302,
+            }]))
+        const user = userEvent.setup()
+
+        render(
+            <RestaurantConfigurationContext.Provider value={{ restaurantName: 'The Third Break', upiVpa: 'sionsarkar@okicici' }}>
+                <TableManager />
+            </RestaurantConfigurationContext.Provider>,
+        )
+
+        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await user.click(screen.getByRole('button', { name: 'Show UPI QR' }))
+
+        expect(screen.getByTitle('UPI payment QR')).toBeInTheDocument()
+        expect(screen.getByRole('heading', { name: 'Scan to pay ₹302.00' })).toBeInTheDocument()
+        expect(screen.getByText(/Pay to sionsarkar@okicici/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Paid online' })).toBeInTheDocument()
+        expect(fetchMock).toHaveBeenCalledTimes(2)
     })
 
     it('adds discounted menu items to the selected table and totals their price', async () => {
@@ -230,13 +271,17 @@ describe('TableManager', () => {
             }]))
         const user = userEvent.setup()
 
-        render(<TableManager />)
+        render(
+            <RestaurantConfigurationContext.Provider value={{ restaurantName: 'The Third Break', upiVpa: '' }}>
+                <TableManager />
+            </RestaurantConfigurationContext.Provider>,
+        )
 
         await user.click(await screen.findByRole('button', { name: 'Table 2' }))
         await user.click(screen.getByRole('button', { name: 'Create invoice' }))
 
         const invoiceText = pdf.document.text.mock.calls.flat().join(' ')
-        expect(invoiceText).toContain('PET PUJA')
+        expect(invoiceText).toContain('THE THIRD BREAK')
         expect(invoiceText).toContain('INVOICE')
         expect(invoiceText).toContain('Invoice no.')
         expect(invoiceText).toContain('Seating: Table 2')

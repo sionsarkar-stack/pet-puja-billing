@@ -10,20 +10,26 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+const restaurantConfiguration = {
+  restaurantName: 'The Third Break',
+  upiVpa: 'sionsarkar@okicici',
+}
+
 describe('App', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
   })
 
-  it('shows the owner login form when no session exists', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ authenticated: false, username: null }),
-    )
+  it('shows the team login form when no session exists', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: false, username: null }))
 
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'The Third Break home' })).toBeInTheDocument()
     expect(screen.getByLabelText('Username')).toBeInTheDocument()
     expect(screen.getByLabelText('Password')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(
@@ -34,8 +40,9 @@ describe('App', () => {
 
   it('submits credentials and shows the signed-in state', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
       .mockResolvedValueOnce(jsonResponse({ authenticated: false, username: null }))
-      .mockResolvedValueOnce(jsonResponse({ username: 'restaurant-owner' }))
+      .mockResolvedValueOnce(jsonResponse({ mode: 'ADMIN', username: 'restaurant-owner' }))
       .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([]))
     const user = userEvent.setup()
@@ -48,7 +55,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
     expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       '/api/auth/login',
       expect.objectContaining({
         body: JSON.stringify({ username: 'restaurant-owner', password: 'correct-password' }),
@@ -57,6 +64,7 @@ describe('App', () => {
       }),
     )
     expect(await screen.findByRole('heading', { name: 'Table orders' })).toBeInTheDocument()
+    expect(screen.getByText('Admin mode')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Table' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Menu' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument()
@@ -68,6 +76,7 @@ describe('App', () => {
 
   it('explains rejected credentials without leaving the form', async () => {
     vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
       .mockResolvedValueOnce(jsonResponse({ authenticated: false, username: null }))
       .mockResolvedValueOnce(jsonResponse({}, 401))
     const user = userEvent.setup()
@@ -81,6 +90,20 @@ describe('App', () => {
 
     expect(await screen.findByText('The username or password is incorrect.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeInTheDocument()
+  })
+
+  it('restores a Captain session and shows the Captain workspace mode', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, mode: 'CAPTAIN', username: 'captain' }))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Table orders' })).toBeInTheDocument()
+    expect(screen.getByText('Captain mode')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Expenses' })).not.toBeInTheDocument()
   })
 })
 

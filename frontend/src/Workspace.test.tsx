@@ -20,7 +20,7 @@ describe('Workspace', () => {
     it('switches management views with keyboard tab navigation', async () => {
         const user = userEvent.setup()
 
-        render(<Workspace isLoggingOut={false} onLogout={async () => { }} username="owner" />)
+        render(<Workspace isLoggingOut={false} mode="ADMIN" onLogout={async () => { }} username="owner" />)
 
         const tableTab = screen.getByRole('tab', { name: 'Table' })
         expect(tableTab).toHaveAttribute('aria-selected', 'true')
@@ -43,5 +43,17 @@ describe('Workspace', () => {
         expect(backupTab).toHaveFocus()
         expect(backupTab).toHaveAttribute('aria-selected', 'true')
         expect(screen.getByText('Backup content')).toBeInTheDocument()
+    })
+
+    it('limits Captain navigation to table, menu, and history', () => {
+        render(<Workspace isLoggingOut={false} mode="CAPTAIN" onLogout={async () => { }} username="captain" />)
+
+        expect(screen.getByRole('tab', { name: 'Table' })).toBeInTheDocument()
+        expect(screen.getByRole('tab', { name: 'Menu' })).toBeInTheDocument()
+        expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Expenses' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Daily close' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Balance sheet' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Backup' })).not.toBeInTheDocument()
     })
 })

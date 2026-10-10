@@ -8,6 +8,7 @@ export type OrderDocument = {
     paymentMethod: PaymentMethod | null
     paymentStatus: 'PAID' | 'PENDING'
     reference: string
+    restaurantName: string
     seatingName: string
     total: number
 }
@@ -26,13 +27,14 @@ export function createOrderDocument(order: OrderDocument) {
     const footerY = 782
     const isPaid = order.paymentStatus === 'PAID'
     const referenceLabel = order.documentTitle === 'PAYMENT RECEIPT' ? 'Receipt no.' : 'Invoice no.'
+    const restaurantNameUppercase = order.restaurantName.toLocaleUpperCase('en-IN')
 
     function addFooter() {
         document.setDrawColor(205, 210, 204)
         document.line(pageLeft, footerY - 12, pageRight, footerY - 12)
         document.setFontSize(8)
         document.setTextColor(91, 102, 92)
-        document.text('Thank you for dining with Pet Puja.', pageLeft, footerY)
+        document.text(`Thank you for dining with ${order.restaurantName}.`, pageLeft, footerY)
         document.text(
             isPaid ? 'Computer-generated payment receipt' : 'Computer-generated invoice',
             pageRight,
@@ -57,7 +59,7 @@ export function createOrderDocument(order: OrderDocument) {
     document.rect(pageLeft, 48, pageRight - pageLeft, 74, 'F')
     document.setTextColor(255, 255, 255)
     document.setFontSize(22)
-    document.text('PET PUJA', 64, 80)
+    document.text(restaurantNameUppercase, 64, 80)
     document.setFontSize(9)
     document.text('RESTAURANT BILLING', 64, 98)
     document.setFontSize(18)
@@ -92,7 +94,7 @@ export function createOrderDocument(order: OrderDocument) {
             document.addPage()
             document.setFontSize(10)
             document.setTextColor(42, 48, 43)
-            document.text(`PET PUJA | ${order.documentTitle} CONTINUED`, pageLeft, 56)
+            document.text(`${restaurantNameUppercase} | ${order.documentTitle} CONTINUED`, pageLeft, 56)
             document.text(order.reference, pageRight, 56, { align: 'right' })
             cursorY = 76
             addTableHeader(cursorY)
@@ -116,7 +118,7 @@ export function createOrderDocument(order: OrderDocument) {
         document.addPage()
         document.setFontSize(10)
         document.setTextColor(42, 48, 43)
-        document.text(`PET PUJA | ${order.documentTitle} SUMMARY`, pageLeft, 56)
+        document.text(`${restaurantNameUppercase} | ${order.documentTitle} SUMMARY`, pageLeft, 56)
         document.text(order.reference, pageRight, 56, { align: 'right' })
         cursorY = 82
     }
