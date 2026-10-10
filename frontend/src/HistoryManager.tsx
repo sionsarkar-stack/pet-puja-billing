@@ -1,3 +1,4 @@
+import type { UserMode } from './userMode'
 import { useEffect, useState } from 'react'
 import ConfirmationDialog from './ConfirmationDialog'
 import {
@@ -31,7 +32,7 @@ function getLocalDateInput(dateTime: string) {
     ].join('-')
 }
 
-function HistoryManager() {
+function HistoryManager({ mode }: { mode: UserMode }) {
     const [paidOrders, setPaidOrders] = useState<PaidOrder[]>([])
     const [selectedPaidOrder, setSelectedPaidOrder] = useState<PaidOrder | null>(null)
     const [refundType, setRefundType] = useState<RefundType>('REFUND')
@@ -292,8 +293,9 @@ function HistoryManager() {
                                                 <span className="history-correction-details">
                                                     <strong>-{currencyFormatter.format(paidOrder.refund.amount)}</strong>
                                                     <span>{paidOrder.refund.reason}</span>
+                                                    {paidOrder.refund.refundedBy && <small>by {paidOrder.refund.refundedBy}</small>}
                                                 </span>
-                                            ) : (
+                                            ) : mode !== 'ADMIN' ? null : (
                                                 <button className="history-refund-action" onClick={() => startRefund(paidOrder)} type="button">
                                                     Void / refund
                                                 </button>

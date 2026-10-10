@@ -8,6 +8,7 @@ export type BillRefund = {
     refundType: RefundType
     amount: number
     reason: string
+    refundedBy?: string | null
     refundedAt: string
 }
 

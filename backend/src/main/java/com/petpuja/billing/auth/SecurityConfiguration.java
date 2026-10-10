@@ -94,6 +94,7 @@ public class SecurityConfiguration {
                                                 .requestMatchers("/api/expenses/**", "/api/daily-closings/**",
                                                                 "/api/balance-sheet/**", "/api/backups/**")
                                                 .hasRole("ADMIN")
+                                                .requestMatchers("/api/refunds/**").hasRole("ADMIN")
                                                 .requestMatchers(HttpMethod.POST, "/api/menu", "/api/menu/**")
                                                 .hasRole("ADMIN")
                                                 .requestMatchers(HttpMethod.PUT, "/api/menu/**").hasRole("ADMIN")

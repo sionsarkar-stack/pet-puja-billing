@@ -1264,8 +1264,9 @@
 }
 
 .table-order-table {
+  --table-min-width: 690px;
   border-collapse: collapse;
-  min-width: 690px;
+  min-width: var(--table-min-width);
   width: 100%;
 }
 
@@ -1448,8 +1449,9 @@
 }
 
 .menu-table {
+  --table-min-width: 890px;
   border-collapse: collapse;
-  min-width: 890px;
+  min-width: var(--table-min-width);
   width: 100%;
 }
 
@@ -2194,21 +2196,22 @@
 }
 
 .financial-table {
+  --table-min-width: 650px;
   border-collapse: collapse;
-  min-width: 650px;
+  min-width: var(--table-min-width);
   width: 100%;
 }
 
 .expense-table {
-  min-width: 810px;
+  --table-min-width: 810px;
 }
 
 .history-table {
-  min-width: 930px;
+  --table-min-width: 930px;
 }
 
 .balance-refund-table {
-  min-width: 920px;
+  --table-min-width: 920px;
 }
 
 .financial-table th {
@@ -2485,7 +2488,7 @@
 }
 
 .daily-closing-table {
-  min-width: 840px;
+  --table-min-width: 840px;
 }
 
 .balance-export {
@@ -2715,5 +2718,444 @@
 
   .financial-table-wrap {
     border-radius: 6px;
+  }
+}
+/* ==========================================================================
+   Responsive refinements: phone (<=560px), tablet (561-1199px), touch input
+   ========================================================================== */
+
+.workspace-page {
+  min-height: 100dvh;
+}
+
+.workspace-header {
+  padding-left: max(32px, env(safe-area-inset-left));
+  padding-right: max(32px, env(safe-area-inset-right));
+}
+
+.workspace-shell {
+  padding-left: max(32px, env(safe-area-inset-left));
+  padding-right: max(32px, env(safe-area-inset-right));
+}
+
+.workspace-content {
+  padding-bottom: calc(80px + env(safe-area-inset-bottom));
+}
+
+/*
+ * A table wider than its wrapper becomes labelled cards instead of scrolling sideways.
+ * stackedTables.ts compares each table's --table-min-width with its wrapper and sets data-stacked.
+ */
+.menu-table-wrap,
+.financial-table-wrap,
+.table-order-table-wrap {
+  container-type: inline-size;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] {
+  display: block;
+  min-width: 0;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] thead {
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] :is(tbody, tfoot) {
+  display: block;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] tr {
+  border-top: 1px solid var(--line);
+  display: block;
+  padding: 10px 0;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] tbody tr:first-child {
+  border-top: 0;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] td {
+  align-items: center;
+  border-top: 0;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-width: 0 !important;
+  padding: 7px 16px;
+  text-align: right;
+  white-space: normal !important;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] td:not([data-label]) {
+  justify-content: flex-end;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] td:empty {
+  display: none;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] td[data-label]::before {
+  color: var(--muted);
+  content: attr(data-label);
+  flex: 0 0 auto;
+  font: 800 0.68rem var(--sans);
+  letter-spacing: 0.02em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] tbody td:first-child {
+  font-size: 0.98rem;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] tfoot tr {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+:is(.menu-table, .financial-table, .table-order-table)[data-stacked] tfoot th {
+  background: none;
+  padding: 7px 16px;
+}
+
+.menu-table[data-stacked] td input {
+  min-width: 0;
+  width: min(100%, 210px);
+}
+
+/* Wider stacked tables, such as tablets in portrait, pair two label/value cells per line. */
+@container (min-width: 520px) {
+
+  :is(.menu-table, .financial-table)[data-stacked] tbody tr {
+    column-gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :is(.menu-table, .financial-table)[data-stacked] tbody td:not([data-label]) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Touch-friendly hit areas on phones, tablets and any coarse pointer. */
+@media (max-width: 1199px), (pointer: coarse) {
+
+  button,
+  select,
+  input:not([type='checkbox'], [type='radio']) {
+    min-height: 44px;
+  }
+
+  .brand {
+    align-items: center;
+    display: inline-flex;
+    min-height: 44px;
+  }
+
+  .confirmation-dialog-actions button,
+  .invoice-create,
+  .invoice-download,
+  .invoice-print {
+    min-height: 44px;
+  }
+
+  .invoice-create,
+  .invoice-download {
+    align-items: center;
+    display: inline-flex;
+  }
+
+  .table-order-remove,
+  .history-refund-action {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .menu-item-actions {
+    gap: 4px;
+  }
+
+  .menu-item-actions button {
+    min-width: 44px;
+    padding: 8px 10px;
+  }
+
+  .table-selector.table-add-selector,
+  .table-add-selector {
+    flex-basis: 44px;
+    height: 44px;
+    min-height: 44px;
+    width: 44px;
+  }
+
+  .workspace-tabs {
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .workspace-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .workspace-tabs button {
+    flex: 0 0 auto;
+    scroll-snap-align: center;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 820px) {
+
+  /* 16px prevents iOS Safari from zooming into focused fields. */
+  .workspace-page :is(input, select, textarea),
+  .auth-page :is(input, select, textarea) {
+    font-size: 16px;
+  }
+
+  .workspace-header {
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+  }
+
+  .workspace-shell {
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+  }
+
+  .menu-editor,
+  .table-order-builder {
+    max-width: none;
+  }
+
+  .outdoor-grid {
+    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  }
+
+  .outdoor-selector {
+    border-radius: 16px;
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1199px) {
+
+  .menu-layout:has(> .menu-editor) {
+    align-items: start;
+    gap: 32px;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  }
+
+  .menu-layout>.menu-editor {
+    max-width: none;
+    position: sticky;
+    top: 16px;
+  }
+}
+
+@media (min-width: 960px) and (max-width: 1199px) {
+
+  .table-order-area {
+    align-items: start;
+    gap: 32px;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    margin-top: 40px;
+  }
+
+  .table-order-builder {
+    max-width: none;
+    padding: 24px;
+  }
+
+  .table-order-table {
+    --table-min-width: 600px;
+  }
+}
+
+@media (max-width: 560px) {
+
+  .workspace-header {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+
+  .workspace-shell {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+
+  .workspace-tabs {
+    background: var(--background);
+    display: flex;
+    gap: 8px;
+    margin: 0 calc(-1 * max(16px, env(safe-area-inset-left)));
+    overflow-x: auto;
+    padding: 8px max(16px, env(safe-area-inset-left));
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .workspace-tabs button {
+    min-width: 84px;
+  }
+
+  .workspace-content {
+    padding-top: 24px;
+  }
+
+  .outdoor-grid {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  }
+
+  .outdoor-selector {
+    border-radius: 14px;
+  }
+
+  /* Keep primary order actions in thumb reach. */
+  .table-order-actions,
+  .table-payment-buttons {
+    background: #fbfaf5;
+    border-top: 1px solid var(--line);
+    bottom: 0;
+    box-shadow: 0 -8px 16px rgba(19, 24, 19, 0.06);
+    margin: 0 -20px;
+    padding: 12px 20px max(12px, env(safe-area-inset-bottom));
+    position: sticky;
+    z-index: 5;
+  }
+
+  .table-payment-buttons {
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+    margin: 0 -4px;
+    padding: 12px 4px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .table-payment-buttons>button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 8px;
+  }
+
+  .confirmation-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .confirmation-dialog {
+    border-radius: 16px 16px 0 0;
+    max-height: 92dvh;
+    max-width: none;
+    overflow-y: auto;
+    padding: 24px 20px max(24px, env(safe-area-inset-bottom));
+  }
+
+  .confirmation-dialog-actions {
+    flex-direction: column-reverse;
+  }
+
+  .confirmation-dialog-actions button {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.session-expired-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 55%);
+}
+
+/* Watermark sits in normal flow at the bottom-right, so it never overlaps content. */
+.auth-page,
+.workspace-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-page > *,
+.workspace-page > * {
+  width: 100%;
+}
+
+.watermark {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding: 14px max(32px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) 32px;
+}
+
+.watermark-text {
+  border-right: 3px solid var(--lime);
+  color: var(--olive);
+  display: flex;
+  flex-direction: column;
+  font-family: 'Dancing Script', cursive;
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.25;
+  padding-right: 12px;
+  text-align: right;
+}
+
+.watermark-heart {
+  color: #d1495b;
+  font-family: var(--sans);
+  font-size: 0.9em;
+}
+
+.splash-screen {
+  align-items: center;
+  animation: splash-in 400ms ease-out;
+  background: var(--background);
+  display: flex;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 24px;
+}
+
+.splash-screen .watermark-text {
+  align-items: center;
+  border-right: 0;
+  font-size: clamp(2rem, 8vw, 3.4rem);
+  padding-right: 0;
+  text-align: center;
+}
+
+@keyframes splash-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (max-width: 560px) {
+  .watermark {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .watermark-text {
+    font-size: 1.05rem;
   }
 }

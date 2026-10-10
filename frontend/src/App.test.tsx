@@ -26,7 +26,7 @@ describe('App', () => {
       .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
       .mockResolvedValueOnce(jsonResponse({ authenticated: false, username: null }))
 
-    render(<App />)
+    render(<App splashDuration={0} />)
 
     expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'The Third Break home' })).toBeInTheDocument()
@@ -47,7 +47,7 @@ describe('App', () => {
       .mockResolvedValueOnce(jsonResponse([]))
     const user = userEvent.setup()
 
-    render(<App />)
+    render(<App splashDuration={0} />)
 
     await screen.findByRole('heading', { name: 'Welcome back' })
     await user.type(screen.getByLabelText('Username'), 'restaurant-owner')
@@ -81,7 +81,7 @@ describe('App', () => {
       .mockResolvedValueOnce(jsonResponse({}, 401))
     const user = userEvent.setup()
 
-    render(<App />)
+    render(<App splashDuration={0} />)
 
     await screen.findByRole('heading', { name: 'Welcome back' })
     await user.type(screen.getByLabelText('Username'), 'restaurant-owner')
@@ -99,7 +99,7 @@ describe('App', () => {
       .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([]))
 
-    render(<App />)
+    render(<App splashDuration={0} />)
 
     expect(await screen.findByRole('heading', { name: 'Table orders' })).toBeInTheDocument()
     expect(screen.getByText('Captain mode')).toBeInTheDocument()

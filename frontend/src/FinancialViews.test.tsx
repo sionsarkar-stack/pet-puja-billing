@@ -71,7 +71,7 @@ describe('financial views', () => {
     it('shows paid history with the table, payment method, and amount', async () => {
         vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([paidOrder]))
 
-        render(<HistoryManager />)
+        render(<HistoryManager mode="ADMIN" />)
 
         const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
         expect(within(historyTable).getByText('Table 3')).toBeInTheDocument()
@@ -97,7 +97,7 @@ describe('financial views', () => {
         vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([cashPaidOrder, paidOrder, refundedPaidOrder]))
         const user = userEvent.setup()
 
-        render(<HistoryManager />)
+        render(<HistoryManager mode="ADMIN" />)
 
         const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
         expect(screen.getByText('3 payments')).toBeInTheDocument()
@@ -123,7 +123,7 @@ describe('financial views', () => {
             .mockResolvedValueOnce(jsonResponse(refund, 201))
         const user = userEvent.setup()
 
-        render(<HistoryManager />)
+        render(<HistoryManager mode="ADMIN" />)
 
         const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
         await user.click(within(historyTable).getByRole('button', { name: 'Void / refund' }))
@@ -155,7 +155,7 @@ describe('financial views', () => {
             .mockResolvedValueOnce(new Response(null, { status: 500 }))
         const user = userEvent.setup()
 
-        render(<HistoryManager />)
+        render(<HistoryManager mode="ADMIN" />)
 
         const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
         await user.click(within(historyTable).getByRole('button', { name: 'Void / refund' }))

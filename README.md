@@ -11,7 +11,7 @@ A deliberately small, production-minded restaurant billing and management system
 
 ## Local development
 
-Prerequisites: Java 25 and Node.js 24 LTS or newer. Docker is not required.
+Prerequisites: Java 25 and Node.js 24 LTS or newer.
 
 ```bash
 # Terminal 1: API
@@ -74,18 +74,30 @@ cd backend && ./mvnw verify
 cd frontend && npm test && npm run lint && npm run build
 ```
 
-## Optional container deployment
+## Production deployment (no Docker)
 
-This setup is intended for one small AWS EC2 instance with one Elastic IP. Install Docker Engine and the Compose plugin, allow inbound SSH and HTTP in the security group, and keep PostgreSQL private to the Compose network.
+Run on one host (for example a small EC2 instance) with native PostgreSQL, the Spring Boot jar, and nginx.
 
 ```bash
-cp .env.example .env
-# Set long, unique database, Admin, and Captain passwords in .env.
-docker compose -f compose.prod.yaml up -d --build
-curl http://localhost/api/health
+cd backend && ./mvnw -DskipTests package      # produces target/*.jar
+cd ../frontend && npm ci && npm run build     # produces dist/
 ```
 
-Persist and back up the `postgres-data` Docker volume. Terminate TLS on nginx after attaching a domain (for example with an nginx certificate mount or an AWS load balancer). Do not expose port 5432 publicly.
+1. Install Java 25, PostgreSQL and nginx. Create the database and user; keep port 5432 private.
+2. Copy `.env.example` to `/etc/pet-puja.env`, set `DB_*`, Admin and Captain values, and run the jar as a systemd service with `EnvironmentFile=/etc/pet-puja.env` and `ExecStart=java -jar /opt/pet-puja/app.jar`.
+3. Copy `frontend/dist` to `/var/www/pet-puja`, and use `frontend/nginx.conf` as `/etc/nginx/conf.d/pet-puja.conf` after replacing `example.com`. It adds gzip, security headers, a login rate limit, and the HTTPS redirect.
+4. Point a DNS name at the Elastic IP, open ports 80 and 443 (and SSH from your IP only), then run `sudo certbot certonly --nginx -d <domain>` and reload nginx. Set `SESSION_COOKIE_SECURE=true`.
+5. Verify with `curl http://localhost/api/health`, and schedule `deploy/backup.sh` from cron.
+
+### Backups on PostgreSQL
+
+The in-app Backup tab only works with the H2 local profile and is hidden on PostgreSQL. Install `deploy/backup.sh` and run it nightly from cron; it keeps 14 days locally and copies to S3 if `S3_BUCKET` is set (attach an IAM role with `s3:PutObject`). Test a restore before launch:
+
+```bash
+createdb pet_puja_restore_test
+pg_restore --no-owner -d pet_puja_restore_test /var/backups/pet-puja/<file>.dump
+dropdb pet_puja_restore_test
+```
 
 ## Configuration
 
@@ -94,7 +106,7 @@ Persist and back up the `postgres-data` Docker volume. Terminate TLS on nginx af
 | `DB_URL` | Backend JDBC URL | `jdbc:postgresql://localhost:5432/pet_puja` |
 | `DB_USERNAME` | Database user | `pet_puja` |
 | `DB_PASSWORD` | Database password | `pet_puja_local` for local development only |
-| `spring.profiles.active=local` | File-backed H2 database | Recommended for local no-Docker development |
+| `spring.profiles.active=local` | File-backed H2 database | Recommended for local development |
 | `ADMIN_USERNAME` | Admin login username; grants every workspace and menu management | Required |
 | `ADMIN_PASSWORD` | Admin login password | Required |
 | `CAPTAIN_USERNAME` | Captain login username; grants Table, read-only Menu, and History | Required |
@@ -102,7 +114,7 @@ Persist and back up the `postgres-data` Docker volume. Terminate TLS on nginx af
 | `RESTAURANT_NAME` | Public restaurant name shown in the app, documents, and payment QR | `Restaurant` |
 | `UPI_VPA` | Public UPI payee address embedded in payment QR codes | Optional |
 | `PORT` | Backend HTTP port | `8080` |
-| `SESSION_COOKIE_SECURE` | Send the login session only over HTTPS | `false` locally, `true` in production Compose |
+| `SESSION_COOKIE_SECURE` | Send the login session only over HTTPS | `false` locally, `true` in production over HTTPS |
 | `VITE_API_BASE_URL` | Optional browser API origin | same origin |
 
 Secrets belong in `.env` on the host or an external secret store; `.env` is ignored by git.

@@ -34,6 +34,16 @@ public class LocalDatabaseBackupController {
         this.dataSource = dataSource;
     }
 
+    @GetMapping("/status")
+    public java.util.Map<String, Boolean> status() {
+        try (var connection = dataSource.getConnection()) {
+            return java.util.Map.of("available",
+                    "H2".equalsIgnoreCase(connection.getMetaData().getDatabaseProductName()));
+        } catch (SQLException exception) {
+            return java.util.Map.of("available", false);
+        }
+    }
+
     @GetMapping(value = "/local-database", produces = "application/zip")
     public ResponseEntity<StreamingResponseBody> downloadLocalDatabaseBackup() {
         Path backupDirectory;

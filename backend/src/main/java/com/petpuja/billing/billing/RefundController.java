@@ -30,7 +30,8 @@ public class RefundController {
 
     @PostMapping
     @Transactional
-    public ResponseEntity<BillRefundResponse> createRefund(@Valid @RequestBody RefundRequest request) {
+    public ResponseEntity<BillRefundResponse> createRefund(@Valid @RequestBody RefundRequest request,
+            java.security.Principal principal) {
         var bill = billRepository.findById(request.billId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Paid order not found"));
         if (bill.getStatus() != BillStatus.PAID) {
@@ -40,7 +41,7 @@ public class RefundController {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This order has already been corrected");
         }
 
-        var refund = BillRefund.create(bill, request.refundType(), request.reason().trim());
+        var refund = BillRefund.create(bill, request.refundType(), request.reason().trim(), principal.getName());
         var savedRefund = billRefundRepository.save(refund);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(savedRefund));
     }
@@ -52,6 +53,7 @@ public class RefundController {
                 refund.getRefundType(),
                 refund.getAmount(),
                 refund.getReason(),
+                refund.getRefundedBy(),
                 refund.getRefundedAt());
     }
 

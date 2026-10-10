@@ -7,6 +7,8 @@ import {
 } from './RestaurantConfiguration'
 import type { UserMode } from './userMode'
 import Workspace from './Workspace'
+import { SplashScreen, Watermark } from './Watermark'
+import { SESSION_EXPIRED_EVENT } from './sessionExpiry'
 import './App.css'
 
 type AuthState =
@@ -57,7 +59,7 @@ function isRestaurantConfiguration(value: unknown): value is RestaurantConfigura
     && typeof value.upiVpa === 'string'
 }
 
-function App() {
+function App({ splashDuration = 2000 }: { splashDuration?: number }) {
   const [authState, setAuthState] = useState<AuthState>({ status: 'checking' })
   const [restaurantConfiguration, setRestaurantConfiguration] = useState<RestaurantConfiguration | null>(null)
   const [username, setUsername] = useState('')
@@ -65,6 +67,24 @@ function App() {
   const [loginError, setLoginError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const [showSplash, setShowSplash] = useState(splashDuration > 0)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowSplash(false), splashDuration)
+    return () => window.clearTimeout(timer)
+  }, [splashDuration])
+  const signedInUsername = authState.status === 'signed-in' ? authState.username : ''
+
+  useEffect(() => {
+    function handleExpired() {
+      setUsername(signedInUsername)
+      setSessionExpired(true)
+    }
+    if (!signedInUsername) return
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpired)
+  }, [signedInUsername])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -143,6 +163,7 @@ function App() {
       }
 
       setPassword('')
+      setSessionExpired(false)
       setAuthState({ status: 'signed-in', username: login.username, mode: login.mode })
     } catch {
       setLoginError('We could not sign you in. Please try again.')
@@ -165,6 +186,7 @@ function App() {
         throw new Error(`Logout failed: ${response.status}`)
       }
 
+      setSessionExpired(false)
       setAuthState({ status: 'signed-out' })
     } catch {
       setLoginError('We could not sign you out. Please try again.')
@@ -173,12 +195,15 @@ function App() {
     }
   }
 
+  if (showSplash) return <SplashScreen />
+
   if (restaurantConfiguration === null) {
     return (
       <main className="auth-page">
         <div className="auth-loading" aria-live="polite" role="status">
           {loginError || 'Loading restaurant settings'}
         </div>
+        <Watermark />
       </main>
     )
   }
@@ -192,6 +217,31 @@ function App() {
           onLogout={handleLogout}
           username={authState.username}
         />
+        {sessionExpired && (
+          <div className="session-expired-backdrop">
+            <form className="confirmation-dialog" role="alertdialog" aria-labelledby="session-expired-title" onSubmit={handleLogin}>
+              <p className="eyebrow">Session expired</p>
+              <h2 id="session-expired-title">Sign in again</h2>
+              <p>Your work on screen is kept. Sign in as {authState.username}, then retry your last action.</p>
+              <div className="field-group">
+                <label htmlFor="reauth-password">Password</label>
+                <input
+                  autoComplete="current-password"
+                  autoFocus
+                  disabled={isSubmitting}
+                  id="reauth-password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  type="password"
+                  value={password}
+                />
+              </div>
+              {loginError && <p role="alert">{loginError}</p>}
+              <div className="confirmation-dialog-actions">
+                <button type="submit" disabled={isSubmitting}>Sign in</button>
+              </div>
+            </form>
+          </div>
+        )}
       </RestaurantConfigurationContext.Provider>
     )
   }
@@ -270,6 +320,7 @@ function App() {
 
           </section>
         </section>
+        <Watermark />
       </main>
     </RestaurantConfigurationContext.Provider>
   )

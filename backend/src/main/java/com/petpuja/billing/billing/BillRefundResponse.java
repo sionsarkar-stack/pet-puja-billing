@@ -9,5 +9,6 @@ public record BillRefundResponse(
         RefundType refundType,
         BigDecimal amount,
         String reason,
+        String refundedBy,
         Instant refundedAt) {
 }

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useRef, useState } from 'react'
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { getRestaurantMark, useRestaurantConfiguration } from './RestaurantConfiguration'
 import type { UserMode } from './userMode'
 import BalanceSheetManager from './BalanceSheetManager'
@@ -8,6 +8,9 @@ import ExpensesManager from './ExpensesManager'
 import HistoryManager from './HistoryManager'
 import MenuManager from './MenuManager'
 import TableManager from './TableManager'
+import { useStackedTables } from './stackedTables'
+import { Watermark } from './Watermark'
+import { apiBaseUrl } from './financial'
 
 type WorkspaceProps = {
     isLoggingOut: boolean
@@ -33,8 +36,28 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
     const [activeTab, setActiveTab] = useState<WorkspaceTab>('table')
     const [hasOpenedTable, setHasOpenedTable] = useState(true)
     const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
+    const shellRef = useRef<HTMLDivElement>(null)
+    useStackedTables(shellRef)
+
+    useEffect(() => {
+        document.getElementById(`tab-${activeTab}`)?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
+    }, [activeTab])
+    const [backupAvailable, setBackupAvailable] = useState(true)
+
+    useEffect(() => {
+        if (mode !== 'ADMIN') return
+        const controller = new AbortController()
+        fetch(`${apiBaseUrl}/api/backups/status`, { credentials: 'include', signal: controller.signal })
+            .then((response) => (response.ok ? response.json() : null))
+            .then((body) => {
+                if (body?.available === false) setBackupAvailable(false)
+            })
+            .catch(() => undefined)
+        return () => controller.abort()
+    }, [mode])
+
     const visibleTabs = mode === 'ADMIN'
-        ? tabs
+        ? tabs.filter((tab) => tab.id !== 'backup' || backupAvailable)
         : tabs.filter((tab) => tab.id === 'table' || tab.id === 'menu' || tab.id === 'history')
 
     function selectTab(tab: WorkspaceTab) {
@@ -51,7 +74,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         const nextTabIndex = event.key === 'Home'
             ? 0
             : event.key === 'End'
-                ? tabs.length - 1
+                ? visibleTabs.length - 1
                 : (tabIndex + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length
         const nextTab = visibleTabs[nextTabIndex]
 
@@ -76,7 +99,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                 </div>
             </header>
 
-            <div className="workspace-shell">
+            <div className="workspace-shell" ref={shellRef}>
                 <nav aria-label="Restaurant management" className="workspace-tabs" role="tablist">
                     {visibleTabs.map((tab, index) => (
                         <button
@@ -128,7 +151,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                         id="panel-history"
                         role="tabpanel"
                     >
-                        <HistoryManager />
+                        <HistoryManager mode={mode} />
                     </section>
                 )}
 
@@ -176,6 +199,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                     </section>
                 )}
             </div>
+            <Watermark />
         </main>
     )
 }

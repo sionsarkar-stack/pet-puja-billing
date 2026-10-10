@@ -263,7 +263,8 @@ class FinancialControllerTest {
                                 .andExpect(jsonPath("$.billId").value(savedBill.getId()))
                                 .andExpect(jsonPath("$.refundType").value("REFUND"))
                                 .andExpect(jsonPath("$.amount").value(120))
-                                .andExpect(jsonPath("$.reason").value("Customer changed their mind"));
+                                .andExpect(jsonPath("$.reason").value("Customer changed their mind"))
+                                .andExpect(jsonPath("$.refundedBy").value("test-admin"));
 
                 mockMvc.perform(get("/api/history").session(ownerSession))
                                 .andExpect(status().isOk())
@@ -304,6 +305,21 @@ class FinancialControllerTest {
                                                 {"billId":%d,"refundType":"VOID","reason":"Duplicate payment"}
                                                 """.formatted(savedBill.getId())))
                                 .andExpect(status().isConflict());
+        }
+
+        @Test
+        void captainCannotRecordRefunds() throws Exception {
+                var login = mockMvc.perform(post("/api/auth/login")
+                                .contentType(APPLICATION_JSON)
+                                .content("{\"username\":\"test-captain\",\"password\":\"test-captain-password\"}"))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                mockMvc.perform(post("/api/refunds")
+                                .session((MockHttpSession) login.getRequest().getSession(false))
+                                .contentType(APPLICATION_JSON)
+                                .content("{\"billId\":1,\"refundType\":\"VOID\",\"reason\":\"x\"}"))
+                                .andExpect(status().isForbidden());
         }
 
         private MockHttpSession signIn() throws Exception {

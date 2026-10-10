@@ -38,13 +38,17 @@ public class BillRefund {
     @Column(nullable = false, length = 500)
     private String reason;
 
+    @Column(name = "refunded_by", length = 100)
+    private String refundedBy;
+
     @Column(name = "refunded_at", nullable = false, updatable = false)
     private Instant refundedAt;
 
     protected BillRefund() {
     }
 
-    private BillRefund(Bill bill, RefundType refundType, String reason) {
+    private BillRefund(Bill bill, RefundType refundType, String reason, String refundedBy) {
+        this.refundedBy = refundedBy;
         this.bill = bill;
         this.refundType = refundType;
         this.amount = bill.getTotal();
@@ -52,8 +56,8 @@ public class BillRefund {
         bill.recordRefund(this);
     }
 
-    public static BillRefund create(Bill bill, RefundType refundType, String reason) {
-        return new BillRefund(bill, refundType, reason);
+    public static BillRefund create(Bill bill, RefundType refundType, String reason, String refundedBy) {
+        return new BillRefund(bill, refundType, reason, refundedBy);
     }
 
     @PrePersist
@@ -79,6 +83,10 @@ public class BillRefund {
 
     public String getReason() {
         return reason;
+    }
+
+    public String getRefundedBy() {
+        return refundedBy;
     }
 
     public Instant getRefundedAt() {
