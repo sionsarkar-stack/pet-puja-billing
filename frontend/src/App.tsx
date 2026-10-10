@@ -1,7 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import {
   defaultRestaurantConfiguration,
-  getRestaurantMark,
   RestaurantConfigurationContext,
   type RestaurantConfiguration,
 } from './RestaurantConfiguration'
@@ -251,7 +250,7 @@ function App({ splashDuration = 2000 }: { splashDuration?: number }) {
       <main className="auth-page">
         <header className="auth-topbar">
           <a className="brand" href="/" aria-label={`${restaurantConfiguration.restaurantName} home`}>
-            <span className="brand-mark">{getRestaurantMark(restaurantConfiguration.restaurantName)}</span>
+            <span className="brand-mark"><img alt="" src="/crest.png" /></span>
             <span>{restaurantConfiguration.restaurantName}</span>
           </a>
           <span className="owner-badge">Team access</span>

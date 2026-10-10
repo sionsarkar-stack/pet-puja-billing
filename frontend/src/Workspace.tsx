@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
-import { getRestaurantMark, useRestaurantConfiguration } from './RestaurantConfiguration'
+import { useRestaurantConfiguration } from './RestaurantConfiguration'
 import type { UserMode } from './userMode'
 import BalanceSheetManager from './BalanceSheetManager'
 import BackupManager from './BackupManager'
@@ -86,7 +86,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         <main className="workspace-page">
             <header className="workspace-header">
                 <a className="brand" href="/" aria-label={`${restaurantName} home`}>
-                    <span className="brand-mark">{getRestaurantMark(restaurantName)}</span>
+                    <span className="brand-mark"><img alt="" src="/crest.png" /></span>
                     <span>{restaurantName}</span>
                 </a>
 
@@ -100,6 +100,12 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
             </header>
 
             <div className="workspace-shell" ref={shellRef}>
+                <div aria-hidden="true" className="workspace-banner">
+                    <img alt="" className="banner-slide banner-slide-1" src="/players/manchester-united.png" />
+                    <img alt="" className="banner-slide banner-slide-2" src="/players/messi.jpg" />
+                    <img alt="" className="banner-slide banner-slide-3" src="/players/rooney.webp" />
+                    <span className="banner-title">{restaurantName}</span>
+                </div>
                 <nav aria-label="Restaurant management" className="workspace-tabs" role="tablist">
                     {visibleTabs.map((tab, index) => (
                         <button

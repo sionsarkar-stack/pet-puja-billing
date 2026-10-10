@@ -1,11 +1,11 @@
 :root {
-  --background: #f3f1e9;
+  --background: #f4f1ec;
   --display: 'Manrope', sans-serif;
-  --ink: #1c1f17;
-  --lime: #d2eb5c;
-  --line: rgba(28, 31, 23, 0.13);
-  --muted: #686d61;
-  --olive: #697431;
+  --ink: #1a1a1a;
+  --lime: #fbe122;
+  --line: rgba(26, 26, 26, 0.13);
+  --muted: #666666;
+  --olive: #da291c;
   --sans: 'DM Sans', sans-serif;
   background: var(--background);
   color: var(--ink);

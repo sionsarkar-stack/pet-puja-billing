@@ -1,4 +1,4 @@
-export const WATERMARK_LINES = ['Designed by DInda', 'With Love to Rimo da'] as const
+export const WATERMARK_LINES = ['Designed by Dinda', 'With Love to Rimo da'] as const
 
 function WatermarkText() {
     return (
@@ -22,7 +22,14 @@ export function Watermark() {
 export function SplashScreen() {
     return (
         <main className="splash-screen" role="status">
-            <p className="watermark-text"><WatermarkText /></p>
+            <div className="splash-content">
+                <div aria-hidden="true" className="splash-faces">
+                    <img alt="" src="/players/rooney.webp" />
+                    <img alt="" src="/players/manchester-united.png" />
+                    <img alt="" src="/players/messi.jpg" />
+                </div>
+                <p className="watermark-text"><WatermarkText /></p>
+            </div>
         </main>
     )
 }

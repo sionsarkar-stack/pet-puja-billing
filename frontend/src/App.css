@@ -5,7 +5,7 @@
 .auth-page {
   background:
     linear-gradient(115deg, rgba(243, 241, 233, 0.98), rgba(243, 241, 233, 0.82)),
-    repeating-linear-gradient(90deg, transparent 0 79px, rgba(28, 31, 23, 0.035) 80px 81px);
+    repeating-linear-gradient(90deg, transparent 0 79px, rgba(26, 26, 26, 0.035) 80px 81px);
   min-height: 100vh;
   padding-bottom: 36px;
 }
@@ -62,10 +62,12 @@
 }
 
 .auth-visual {
+  animation: hero-slides 18s infinite;
+  background-color: #8e130b;
   background-image:
-    linear-gradient(180deg, rgba(21, 24, 18, 0.1), rgba(21, 24, 18, 0.83)),
-    url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1400&q=85');
-  background-position: center;
+    linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.8)),
+    url('/players/manchester-united.png');
+  background-position: center 20%;
   background-size: cover;
   border-radius: 8px 0 0 8px;
   display: flex;
@@ -115,7 +117,7 @@
 .auth-form-panel {
   align-items: center;
   background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(28, 31, 23, 0.13);
+  border: 1px solid rgba(26, 26, 26, 0.13);
   border-left: 0;
   border-radius: 0 8px 8px 0;
   display: flex;
@@ -163,7 +165,7 @@
 
 .field-group input {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   height: 50px;
@@ -175,11 +177,11 @@
 
 .field-group input:focus {
   border-color: var(--olive);
-  box-shadow: 0 0 0 3px rgba(105, 116, 49, 0.18);
+  box-shadow: 0 0 0 3px rgba(218, 41, 28, 0.18);
 }
 
 .field-group input:disabled {
-  background: #f1f0eb;
+  background: #f3f0ea;
   color: var(--muted);
 }
 
@@ -205,12 +207,12 @@
 }
 
 .auth-submit:hover:not(:disabled) {
-  background: #3a4030;
+  background: #1c1c1c;
   transform: translateY(-1px);
 }
 
 .auth-submit:focus-visible {
-  outline: 3px solid rgba(105, 116, 49, 0.4);
+  outline: 3px solid rgba(218, 41, 28, 0.4);
   outline-offset: 3px;
 }
 
@@ -294,7 +296,7 @@
   }
 
   .auth-form-panel {
-    border-left: 1px solid rgba(28, 31, 23, 0.13);
+    border-left: 1px solid rgba(26, 26, 26, 0.13);
     border-radius: 0 0 8px 8px;
     min-height: 430px;
     padding: 44px 36px;
@@ -351,7 +353,7 @@
 .workspace-page {
   background:
     linear-gradient(115deg, rgba(243, 241, 233, 0.98), rgba(243, 241, 233, 0.82)),
-    repeating-linear-gradient(90deg, transparent 0 79px, rgba(28, 31, 23, 0.035) 80px 81px);
+    repeating-linear-gradient(90deg, transparent 0 79px, rgba(26, 26, 26, 0.035) 80px 81px);
   min-height: 100vh;
 }
 
@@ -400,7 +402,7 @@
 }
 
 .workspace-user button:hover:not(:disabled) {
-  background: rgba(28, 31, 23, 0.06);
+  background: rgba(26, 26, 26, 0.06);
 }
 
 .workspace-shell {
@@ -435,7 +437,7 @@
 }
 
 .workspace-tabs button[aria-selected='true'] {
-  background: rgba(210, 235, 92, 0.25);
+  background: rgba(251, 225, 34, 0.25);
   border-bottom-color: var(--olive);
   color: var(--ink);
 }
@@ -445,7 +447,7 @@
 .menu-item-actions button:focus-visible,
 .menu-cancel:focus-visible,
 .menu-table input:focus-visible {
-  outline: 3px solid rgba(105, 116, 49, 0.4);
+  outline: 3px solid rgba(218, 41, 28, 0.4);
   outline-offset: 3px;
 }
 
@@ -465,7 +467,7 @@
 }
 
 .confirmation-dialog {
-  background: #fbfaf5;
+  background: #fcfbf8;
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 8px;
   box-shadow: 0 22px 58px rgba(19, 24, 19, 0.3);
@@ -492,7 +494,7 @@
 }
 
 .confirmation-dialog-details {
-  background: rgba(210, 235, 92, 0.15);
+  background: rgba(251, 225, 34, 0.15);
   border-left: 3px solid var(--olive);
   color: var(--ink);
   font-size: 0.86rem;
@@ -524,7 +526,7 @@
 }
 
 .confirmation-dialog-actions button:first-child:hover:not(:disabled) {
-  background: rgba(28, 31, 23, 0.06);
+  background: rgba(26, 26, 26, 0.06);
 }
 
 .confirmation-confirm,
@@ -538,7 +540,7 @@
 }
 
 .confirmation-confirm:hover:not(:disabled) {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .confirmation-confirm-danger {
@@ -732,7 +734,7 @@
 }
 
 .seating-selector-status::before {
-  background: #8d948a;
+  background: #8f8f8f;
   border-radius: 50%;
   content: '';
   height: 6px;
@@ -769,7 +771,7 @@
 .table-add-selector {
   align-content: center;
   align-items: center;
-  border-color: rgba(105, 116, 49, 0.7);
+  border-color: rgba(218, 41, 28, 0.7);
   border-style: dashed;
   color: var(--olive);
   display: grid;
@@ -790,8 +792,8 @@
 
 .table-selector:hover,
 .outdoor-selector:hover {
-  background: rgba(210, 235, 92, 0.16);
-  border-color: rgba(105, 116, 49, 0.55);
+  background: rgba(251, 225, 34, 0.16);
+  border-color: rgba(218, 41, 28, 0.55);
   transform: translateY(-2px);
 }
 
@@ -803,7 +805,7 @@
 
 .table-selector[aria-pressed='true'],
 .outdoor-selector[aria-pressed='true'] {
-  background: rgba(210, 235, 92, 0.3);
+  background: rgba(251, 225, 34, 0.3);
   border-color: var(--olive);
   box-shadow: inset 0 0 0 1px var(--olive);
   transform: none;
@@ -816,7 +818,7 @@
 .table-order-form input:focus-visible,
 .table-order-form select:focus-visible,
 .table-order-retry:focus-visible {
-  outline: 3px solid rgba(105, 116, 49, 0.4);
+  outline: 3px solid rgba(218, 41, 28, 0.4);
   outline-offset: 3px;
 }
 
@@ -859,7 +861,7 @@
 .table-order-form select,
 .table-order-form input {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   font: 0.9rem var(--sans);
@@ -896,7 +898,7 @@
 }
 
 .table-order-add:hover {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .table-order-actions {
@@ -921,8 +923,8 @@
 .table-order-complete:hover,
 .table-open:hover,
 .table-restart:hover {
-  background: #c4df54;
-  border-color: #c4df54;
+  background: #e8cf10;
+  border-color: #e8cf10;
 }
 
 .table-order-add:disabled,
@@ -987,12 +989,12 @@
 
 .invoice-create:hover,
 .invoice-download:hover {
-  background: #3a4030;
-  border-color: #3a4030;
+  background: #1c1c1c;
+  border-color: #1c1c1c;
 }
 
 .invoice-print:hover:not(:disabled) {
-  background: rgba(28, 31, 23, 0.06);
+  background: rgba(26, 26, 26, 0.06);
 }
 
 .invoice-print:disabled {
@@ -1271,7 +1273,7 @@
 }
 
 .table-order-table th {
-  background: rgba(210, 235, 92, 0.2);
+  background: rgba(251, 225, 34, 0.2);
   color: var(--ink);
   font-size: 0.7rem;
   font-weight: 800;
@@ -1307,7 +1309,7 @@
 
 .table-order-table tfoot th,
 .table-order-table tfoot td {
-  background: rgba(210, 235, 92, 0.18);
+  background: rgba(251, 225, 34, 0.18);
   border-top: 1px solid var(--line);
   color: var(--ink);
   font-weight: 800;
@@ -1355,7 +1357,7 @@
 
 .field-group textarea {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   line-height: 1.45;
@@ -1369,11 +1371,11 @@
 
 .field-group textarea:focus {
   border-color: var(--olive);
-  box-shadow: 0 0 0 3px rgba(105, 116, 49, 0.18);
+  box-shadow: 0 0 0 3px rgba(218, 41, 28, 0.18);
 }
 
 .field-group textarea:disabled {
-  background: #f1f0eb;
+  background: #f3f0ea;
   color: var(--muted);
 }
 
@@ -1424,7 +1426,7 @@
 }
 
 .menu-save:hover:not(:disabled) {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .menu-save:disabled,
@@ -1456,7 +1458,7 @@
 }
 
 .menu-table th {
-  background: rgba(210, 235, 92, 0.2);
+  background: rgba(251, 225, 34, 0.2);
   color: var(--ink);
   font-size: 0.7rem;
   font-weight: 800;
@@ -1496,12 +1498,12 @@
 }
 
 .menu-table-row-editing {
-  background: rgba(210, 235, 92, 0.12);
+  background: rgba(251, 225, 34, 0.12);
 }
 
 .menu-table input {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 5px;
   color: var(--ink);
   font: 0.86rem var(--sans);
@@ -1512,7 +1514,7 @@
 }
 
 .menu-table input:disabled {
-  background: #f1f0eb;
+  background: #f3f0ea;
   color: var(--muted);
 }
 
@@ -1903,7 +1905,7 @@
 
 .expense-editor select {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   font: 0.9rem var(--sans);
@@ -1914,7 +1916,7 @@
 }
 
 .expense-editor select:disabled {
-  background: #f1f0eb;
+  background: #f3f0ea;
   color: var(--muted);
 }
 
@@ -1936,7 +1938,7 @@
 }
 
 .expense-save:hover:not(:disabled) {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .expense-save:disabled {
@@ -2012,7 +2014,7 @@
 .history-filters input,
 .history-filters select {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   font: 0.84rem var(--sans);
@@ -2036,7 +2038,7 @@
 }
 
 .history-filters button:hover:not(:disabled) {
-  background: rgba(28, 31, 23, 0.06);
+  background: rgba(26, 26, 26, 0.06);
 }
 
 .history-filters button:disabled {
@@ -2083,7 +2085,7 @@
 
 .history-refund-action:hover,
 .refund-cancel:hover:not(:disabled) {
-  background: rgba(28, 31, 23, 0.06);
+  background: rgba(26, 26, 26, 0.06);
 }
 
 .refund-editor {
@@ -2143,7 +2145,7 @@
 .refund-field select,
 .refund-field textarea {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   font: 0.88rem var(--sans);
@@ -2215,7 +2217,7 @@
 }
 
 .financial-table th {
-  background: rgba(210, 235, 92, 0.2);
+  background: rgba(251, 225, 34, 0.2);
   color: var(--ink);
   font-size: 0.7rem;
   font-weight: 800;
@@ -2283,7 +2285,7 @@
 }
 
 .financial-metric-revenue {
-  background: rgba(210, 235, 92, 0.2);
+  background: rgba(251, 225, 34, 0.2);
 }
 
 .financial-metric-refund {
@@ -2387,7 +2389,7 @@
 }
 
 .backup-download-button:hover:not(:disabled) {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .backup-download-button:disabled {
@@ -2415,7 +2417,7 @@
 
 .daily-close-date-field input {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   font: 0.88rem var(--sans);
@@ -2437,7 +2439,7 @@
 }
 
 .daily-close-form button:hover:not(:disabled) {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .daily-close-form button:disabled {
@@ -2472,7 +2474,7 @@
 }
 
 .daily-close-preview-revenue {
-  border-top: 1px solid rgba(105, 116, 49, 0.34);
+  border-top: 1px solid rgba(218, 41, 28, 0.34);
   grid-column: span 2;
   margin-top: 4px;
   padding-top: 12px;
@@ -2534,7 +2536,7 @@
 
 .balance-date-field input {
   background: #ffffff;
-  border: 1px solid rgba(28, 31, 23, 0.2);
+  border: 1px solid rgba(26, 26, 26, 0.2);
   border-radius: 6px;
   color: var(--ink);
   font: 0.88rem var(--sans);
@@ -2557,7 +2559,7 @@
 }
 
 .balance-export-button:hover {
-  background: #3a4030;
+  background: #1c1c1c;
 }
 
 .balance-ledgers {
@@ -2583,7 +2585,7 @@
 .history-filters select:focus,
 .history-filters button:focus-visible,
 .invoice-print:focus-visible {
-  outline: 3px solid rgba(105, 116, 49, 0.4);
+  outline: 3px solid rgba(218, 41, 28, 0.4);
   outline-offset: 3px;
 }
 
@@ -3021,7 +3023,7 @@
   /* Keep primary order actions in thumb reach. */
   .table-order-actions,
   .table-payment-buttons {
-    background: #fbfaf5;
+    background: #fcfbf8;
     border-top: 1px solid var(--line);
     bottom: 0;
     box-shadow: 0 -8px 16px rgba(19, 24, 19, 0.06);
@@ -3158,4 +3160,125 @@
   .watermark-text {
     font-size: 1.05rem;
   }
+}
+
+@keyframes hero-slides {
+  0%, 31% {
+    background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.8)), url('/players/manchester-united.png');
+    background-position: center 20%;
+  }
+  33%, 64% {
+    background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.8)), url('/players/messi.jpg');
+    background-position: center 20%;
+  }
+  66%, 98% {
+    background-image: linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.8)), url('/players/rooney.webp');
+    background-position: center 15%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-visual { animation: none; }
+}
+
+.splash-faces {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+
+.splash-faces img {
+  border: 3px solid #da291c;
+  border-radius: 50%;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  height: 84px;
+  object-fit: cover;
+  object-position: center 18%;
+  width: 84px;
+}
+
+.splash-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.workspace-banner {
+  background: #8e130b;
+  border-radius: 8px;
+  height: clamp(260px, 48vw, 520px);
+  margin-bottom: 16px;
+  overflow: hidden;
+  position: relative;
+}
+
+.workspace-banner::after {
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0) 35%);
+  content: '';
+  inset: 0;
+  position: absolute;
+}
+
+.banner-slide {
+  animation: banner-fade 18s infinite;
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  object-position: center 22%;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.banner-slide-1 { animation-delay: 0s; }
+.banner-slide-1 { object-fit: cover; object-position: center; }
+
+.workspace-banner::before {
+  background: url('/players/manchester-united.png') center / cover;
+  content: '';
+  filter: blur(24px) brightness(0.8);
+  inset: -30px;
+  position: absolute;
+}
+.banner-slide-2 { animation-delay: 6s; }
+.banner-slide-3 { animation-delay: 12s; object-fit: contain; object-position: center; }
+
+.banner-title {
+  bottom: 14px;
+  color: #fbe122;
+  font-family: var(--display);
+  font-size: 1.4rem;
+  font-weight: 800;
+  left: 20px;
+  position: absolute;
+  z-index: 1;
+}
+
+@keyframes banner-fade {
+  0% { opacity: 0; }
+  4%, 30% { opacity: 1; }
+  36%, 100% { opacity: 0; }
+}
+
+@media (max-width: 560px) {
+  .workspace-banner { height: 260px; }
+  .banner-title { font-size: 1.1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-slide { animation: none; }
+  .banner-slide-1 { opacity: 1; }
+}
+
+.brand-mark {
+  background: transparent;
+  overflow: hidden;
+}
+
+.brand-mark img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
