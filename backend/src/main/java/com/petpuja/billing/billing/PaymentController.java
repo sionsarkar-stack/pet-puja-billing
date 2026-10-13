@@ -1,6 +1,8 @@
 package com.petpuja.billing.billing;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
@@ -29,10 +31,13 @@ public class PaymentController {
 
     private final BillRepository billRepository;
     private final MenuItemRepository menuItemRepository;
+    private final BillDiscountService billDiscountService;
 
-    public PaymentController(BillRepository billRepository, MenuItemRepository menuItemRepository) {
+    public PaymentController(BillRepository billRepository, MenuItemRepository menuItemRepository,
+            BillDiscountService billDiscountService) {
         this.billRepository = billRepository;
         this.menuItemRepository = menuItemRepository;
+        this.billDiscountService = billDiscountService;
     }
 
     @PostMapping
@@ -56,8 +61,19 @@ public class PaymentController {
             }
 
             var menuItem = findMenuItem(menuItemId);
-            bill.addLine(menuItem, openOrderLine.getQuantity(), OrderPricing.calculateDiscountedPrice(menuItem));
+            var addOnTotal = BigDecimal.ZERO;
+            var addOnSnapshots = new ArrayList<BillLineAddOn.Snapshot>();
+            for (var addOn : openOrderLine.getAddOns()) {
+                addOnTotal = addOnTotal.add(addOn.getPrice());
+                addOnSnapshots.add(addOn.toSnapshot());
+            }
+            bill.addLineFromSnapshots(menuItem, openOrderLine.getQuantity(),
+                    OrderPricing.calculateDiscountedPrice(menuItem).add(addOnTotal),
+                    addOnSnapshots);
         }
+        var discountableSubtotal = bill.getDiscountableSubtotal();
+        var discount = billDiscountService.calculateDiscount(discountableSubtotal);
+        bill.applyDiscountPercent(discount.percent(), discountableSubtotal);
 
         bill.markPaid(request.paymentMethod(), Instant.now());
 
@@ -72,10 +88,14 @@ public class PaymentController {
                 bill.getTableName(),
                 bill.getPaymentMethod(),
                 bill.getPaidAt(),
+                bill.getSubtotal(),
+                bill.getDiscountPercent(),
+                bill.getDiscountAmount(),
                 bill.getTotal(),
                 bill.getLines().stream()
                         .map(line -> new PaidOrderResponse.PaidOrderLineResponse(
-                                line.getItemName(),
+                                line.getDisplayName(),
+                                line.getSection(),
                                 line.getQuantity(),
                                 line.getUnitPrice(),
                                 line.getLineTotal()))

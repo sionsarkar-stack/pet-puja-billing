@@ -143,7 +143,7 @@ describe('TableManager', () => {
         expect(within(orderTable).getByText('Aloo Tikki')).toBeInTheDocument()
         expect(within(orderTable).getByText('3')).toBeInTheDocument()
         expect(within(orderTable).getByText('₹90.00')).toBeInTheDocument()
-        expect(within(orderTable).getAllByText('₹270.00')).toHaveLength(2)
+        expect(within(orderTable).getAllByText('₹270.00')).toHaveLength(3)
         expect(within(tableTwoButton).getByText('Open')).toBeInTheDocument()
         expect(within(tableTwoButton).getByText('3 items · ₹270.00')).toBeInTheDocument()
 
@@ -155,6 +155,77 @@ describe('TableManager', () => {
         await user.selectOptions(screen.getByLabelText('Menu item'), '1')
         await user.click(screen.getByRole('button', { name: 'Add to Outdoor 1' }))
         expect(within(await screen.findByRole('table', { name: 'Order for Outdoor 1' })).getByText('Aloo Tikki')).toBeInTheDocument()
+    })
+
+    it('shows add-ons only for the selected item and saves their price with the order', async () => {
+        const menuItems = [
+            {
+                id: 1,
+                name: 'Veg Sandwich',
+                description: 'Vegetable sandwich',
+                section: 'Continental',
+                subsection: 'Sandwiches',
+                discountApplied: 0,
+                price: 65,
+                addOns: [],
+            },
+            {
+                id: 2,
+                name: 'Chicken Sandwich',
+                description: 'Chicken sandwich',
+                section: 'Continental',
+                subsection: 'Sandwiches',
+                discountApplied: 0,
+                price: 90,
+                addOns: [{ id: 12, name: 'Extra cheese', price: 20 }],
+            },
+        ]
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse(menuItems))
+            .mockResolvedValueOnce(jsonResponse([]))
+            .mockResolvedValueOnce(jsonResponse({
+                completed: false,
+                lines: [{
+                    addOns: [{ id: 12, name: 'Extra cheese', price: 20 }],
+                    itemName: 'Chicken Sandwich',
+                    lineTotal: 110,
+                    menuItemId: 2,
+                    quantity: 1,
+                    unitPrice: 110,
+                }],
+                tableName: 'Table 1',
+                total: 110,
+            }))
+        const user = userEvent.setup()
+
+        render(<TableManager />)
+
+        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        const menuSelect = screen.getByLabelText('Menu item')
+        expect(within(screen.getByRole('group', { name: 'Continental / Sandwiches' })).getByRole('option', { name: 'Veg Sandwich - ₹65.00' })).toBeInTheDocument()
+        await user.selectOptions(menuSelect, '1')
+        expect(screen.queryByRole('group', { name: 'Add-ons for Veg Sandwich' })).not.toBeInTheDocument()
+
+        await user.selectOptions(menuSelect, '2')
+        await user.click(screen.getByRole('checkbox', { name: 'Add Extra cheese' }))
+        expect(screen.getByText('Line price:')).toBeInTheDocument()
+        expect(screen.getByText('₹110.00')).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Add to Table 1' }))
+
+        const orderTable = await screen.findByRole('table', { name: 'Order for Table 1' })
+        expect(within(orderTable).getByText('Chicken Sandwich + Extra cheese')).toBeInTheDocument()
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            3,
+            '/api/open-orders',
+            expect.objectContaining({
+                body: JSON.stringify({
+                    completed: false,
+                    lines: [{ menuItemId: 2, quantity: 1, addOnIds: [12] }],
+                    tableName: 'Table 1',
+                }),
+                method: 'PUT',
+            }),
+        )
     })
 
     it('restores a completed unpaid order and opens it for more items', async () => {
@@ -189,7 +260,7 @@ describe('TableManager', () => {
         const orderTable = screen.getByRole('table', { name: 'Order for Outdoor 11' })
         expect(within(orderTable).getByText('Aloo Tikki')).toBeInTheDocument()
         expect(within(orderTable).getByText('3')).toBeInTheDocument()
-        expect(within(orderTable).getAllByText('₹270.00')).toHaveLength(2)
+        expect(within(orderTable).getAllByText('₹270.00')).toHaveLength(3)
         expect(screen.getByText('Final price')).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Create invoice' })).toBeInTheDocument()
         await user.click(screen.getByRole('button', { name: 'Open table' }))
@@ -266,6 +337,9 @@ describe('TableManager', () => {
             .mockResolvedValueOnce(jsonResponse([{
                 completed: true,
                 lines: [{ itemName: 'Paneer Tikka Masala', lineTotal: 270, menuItemId: 1, quantity: 1, unitPrice: 270 }],
+                subtotal: 300,
+                discountPercent: 10,
+                discountAmount: 30,
                 tableName: 'Table 2',
                 total: 270,
             }]))
@@ -286,7 +360,10 @@ describe('TableManager', () => {
         expect(invoiceText).toContain('Invoice no.')
         expect(invoiceText).toContain('Seating: Table 2')
         expect(invoiceText).toContain('Payment status: Pending')
-        expect(invoiceText).toContain('Order total')
+        expect(invoiceText).toContain('Subtotal')
+        expect(invoiceText).toContain('Bill discount (10.00%)')
+        expect(invoiceText).toContain('- INR 30.00')
+        expect(invoiceText).toContain('Final bill')
         expect(invoiceText).toContain('INR 270.00')
         expect(screen.getByTitle('Invoice preview')).toHaveAttribute('src', 'blob:formal-invoice')
         expect(screen.getByRole('link', { name: 'Download invoice' })).toHaveAttribute('download', 'table-2-invoice.pdf')
@@ -331,7 +408,7 @@ describe('TableManager', () => {
             expect.objectContaining({
                 body: JSON.stringify({
                     completed: false,
-                    lines: [{ menuItemId: 1, quantity: 1 }],
+                    lines: [{ menuItemId: 1, quantity: 1, addOnIds: [] }],
                     tableName: 'Table 1',
                 }),
                 method: 'PUT',

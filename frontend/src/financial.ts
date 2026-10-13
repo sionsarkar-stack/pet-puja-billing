@@ -14,6 +14,7 @@ export type BillRefund = {
 
 export type PaidOrderLine = {
     itemName: string
+    section?: string
     quantity: number
     unitPrice: number
     lineTotal: number
@@ -25,6 +26,9 @@ export type PaidOrder = {
     tableName: string
     paymentMethod: PaymentMethod
     paidAt: string
+    subtotal?: number
+    discountPercent?: number
+    discountAmount?: number
     total: number
     lines: PaidOrderLine[]
     refund: BillRefund | null
@@ -36,10 +40,20 @@ export type OpenOrderLine = {
     quantity: number
     unitPrice: number
     lineTotal: number
+    addOns: OpenOrderAddOn[]
+}
+
+export type OpenOrderAddOn = {
+    id: number
+    name: string
+    price: number
 }
 
 export type OpenOrder = {
     tableName: string
+    subtotal?: number
+    discountPercent?: number
+    discountAmount?: number
     total: number
     completed: boolean
     lines: OpenOrderLine[]
@@ -64,6 +78,7 @@ export type BalanceSheet = {
 export type DailyClosing = {
     id: number
     closingDate: string
+    startedAt: string | null
     cashSales: number
     onlineSales: number
     profits: number
@@ -77,6 +92,8 @@ export type DailyClosing = {
 
 export type DailyClosingPreview = {
     closingDate: string
+    startedAt: string
+    endedAt: string
     cashSales: number
     onlineSales: number
     profits: number
@@ -87,7 +104,14 @@ export type DailyClosingPreview = {
     expenseCount: number
 }
 
+export type BusinessDayStatus = {
+    active: boolean
+    startedAt: string | null
+    businessDate: string | null
+}
+
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+export const INDIA_TIME_ZONE = 'Asia/Kolkata'
 
 export const currencyFormatter = new Intl.NumberFormat('en-IN', {
     currency: 'INR',
@@ -99,6 +123,25 @@ export const currencyFormatter = new Intl.NumberFormat('en-IN', {
 const dateTimeFormatter = new Intl.DateTimeFormat('en-IN', {
     dateStyle: 'medium',
     timeStyle: 'short',
+    timeZone: INDIA_TIME_ZONE,
+})
+
+const timeFormatter = new Intl.DateTimeFormat('en-IN', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: INDIA_TIME_ZONE,
+})
+
+const dateInputFormatter = new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: INDIA_TIME_ZONE,
+    year: 'numeric',
+})
+
+const dateOnlyFormatter = new Intl.DateTimeFormat('en-IN', {
+    dateStyle: 'medium',
+    timeZone: INDIA_TIME_ZONE,
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,6 +169,7 @@ export function isBillRefund(value: unknown): value is BillRefund {
 function isPaidOrderLine(value: unknown): value is PaidOrderLine {
     return isRecord(value)
         && typeof value.itemName === 'string'
+        && (!('section' in value) || typeof value.section === 'string')
         && typeof value.quantity === 'number'
         && typeof value.unitPrice === 'number'
         && typeof value.lineTotal === 'number'
@@ -138,6 +182,10 @@ function isOpenOrderLine(value: unknown): value is OpenOrderLine {
         && typeof value.quantity === 'number'
         && typeof value.unitPrice === 'number'
         && typeof value.lineTotal === 'number'
+        && (!('addOns' in value) || (Array.isArray(value.addOns) && value.addOns.every((addOn) => isRecord(addOn)
+            && typeof addOn.id === 'number'
+            && typeof addOn.name === 'string'
+            && typeof addOn.price === 'number')))
 }
 
 export function isPaidOrder(value: unknown): value is PaidOrder {
@@ -147,6 +195,9 @@ export function isPaidOrder(value: unknown): value is PaidOrder {
         && typeof value.tableName === 'string'
         && isPaymentMethod(value.paymentMethod)
         && typeof value.paidAt === 'string'
+        && (!('subtotal' in value) || typeof value.subtotal === 'number')
+        && (!('discountPercent' in value) || typeof value.discountPercent === 'number')
+        && (!('discountAmount' in value) || typeof value.discountAmount === 'number')
         && typeof value.total === 'number'
         && Array.isArray(value.lines)
         && value.lines.every(isPaidOrderLine)
@@ -160,6 +211,9 @@ export function isPaidOrders(value: unknown): value is PaidOrder[] {
 export function isOpenOrder(value: unknown): value is OpenOrder {
     return isRecord(value)
         && typeof value.tableName === 'string'
+        && (!('subtotal' in value) || typeof value.subtotal === 'number')
+        && (!('discountPercent' in value) || typeof value.discountPercent === 'number')
+        && (!('discountAmount' in value) || typeof value.discountAmount === 'number')
         && typeof value.total === 'number'
         && typeof value.completed === 'boolean'
         && Array.isArray(value.lines)
@@ -196,6 +250,7 @@ export function isDailyClosing(value: unknown): value is DailyClosing {
     return isRecord(value)
         && typeof value.id === 'number'
         && typeof value.closingDate === 'string'
+        && (!('startedAt' in value) || typeof value.startedAt === 'string' || value.startedAt === null)
         && typeof value.cashSales === 'number'
         && typeof value.onlineSales === 'number'
         && typeof value.profits === 'number'
@@ -214,6 +269,8 @@ export function isDailyClosings(value: unknown): value is DailyClosing[] {
 export function isDailyClosingPreview(value: unknown): value is DailyClosingPreview {
     return isRecord(value)
         && typeof value.closingDate === 'string'
+        && typeof value.startedAt === 'string'
+        && typeof value.endedAt === 'string'
         && typeof value.cashSales === 'number'
         && typeof value.onlineSales === 'number'
         && typeof value.profits === 'number'
@@ -222,6 +279,13 @@ export function isDailyClosingPreview(value: unknown): value is DailyClosingPrev
         && typeof value.revenue === 'number'
         && typeof value.paidOrderCount === 'number'
         && typeof value.expenseCount === 'number'
+}
+
+export function isBusinessDayStatus(value: unknown): value is BusinessDayStatus {
+    return isRecord(value)
+        && typeof value.active === 'boolean'
+        && (typeof value.startedAt === 'string' || value.startedAt === null)
+        && (typeof value.businessDate === 'string' || value.businessDate === null)
 }
 
 export function getPaymentMethodLabel(paymentMethod: PaymentMethod) {
@@ -235,4 +299,33 @@ export function getRefundTypeLabel(refundType: RefundType) {
 export function formatDateTime(value: string) {
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
+}
+
+export function formatTime(value: string | Date) {
+    const date = value instanceof Date ? value : new Date(value)
+    return Number.isNaN(date.getTime()) ? String(value) : timeFormatter.format(date)
+}
+
+export function getDateInputValue(value: string | Date) {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return null
+
+    const parts = dateInputFormatter.formatToParts(date)
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value
+    const year = part('year')
+    const month = part('month')
+    const day = part('day')
+    return year && month && day ? `${year}-${month}-${day}` : null
+}
+
+export function getDateInputBoundary(value: string, endOfDay = false) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+    const time = endOfDay ? '23:59:59.999' : '00:00:00.000'
+    const date = new Date(`${value}T${time}+05:30`)
+    return getDateInputValue(date) === value ? date : null
+}
+
+export function formatDateOnly(value: string) {
+    const date = getDateInputBoundary(value)
+    return date === null ? value : dateOnlyFormatter.format(date)
 }

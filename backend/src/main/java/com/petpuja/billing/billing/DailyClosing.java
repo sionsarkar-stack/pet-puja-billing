@@ -9,7 +9,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 @Entity
@@ -50,6 +49,9 @@ public class DailyClosing {
     @Column(name = "closed_at", nullable = false, updatable = false)
     private Instant closedAt;
 
+    @Column(name = "started_at")
+    private Instant startedAt;
+
     protected DailyClosing() {
     }
 
@@ -61,7 +63,9 @@ public class DailyClosing {
             BigDecimal refunds,
             BigDecimal expenses,
             int paidOrderCount,
-            int expenseCount) {
+            int expenseCount,
+            Instant startedAt,
+            Instant closedAt) {
         this.closingDate = closingDate;
         this.cashSales = cashSales;
         this.onlineSales = onlineSales;
@@ -71,6 +75,8 @@ public class DailyClosing {
         this.revenue = profits.subtract(refunds).subtract(expenses);
         this.paidOrderCount = paidOrderCount;
         this.expenseCount = expenseCount;
+        this.startedAt = startedAt;
+        this.closedAt = closedAt;
     }
 
     public static DailyClosing create(
@@ -82,13 +88,23 @@ public class DailyClosing {
             BigDecimal expenses,
             int paidOrderCount,
             int expenseCount) {
-        return new DailyClosing(closingDate, cashSales, onlineSales, profits, refunds, expenses, paidOrderCount,
-                expenseCount);
+        return create(closingDate, cashSales, onlineSales, profits, refunds, expenses, paidOrderCount, expenseCount,
+                null, Instant.now());
     }
 
-    @PrePersist
-    void initializeClosedAt() {
-        closedAt = Instant.now();
+    public static DailyClosing create(
+            LocalDate closingDate,
+            BigDecimal cashSales,
+            BigDecimal onlineSales,
+            BigDecimal profits,
+            BigDecimal refunds,
+            BigDecimal expenses,
+            int paidOrderCount,
+            int expenseCount,
+            Instant startedAt,
+            Instant closedAt) {
+        return new DailyClosing(closingDate, cashSales, onlineSales, profits, refunds, expenses, paidOrderCount,
+                expenseCount, startedAt, closedAt);
     }
 
     public Long getId() {
@@ -133,5 +149,9 @@ public class DailyClosing {
 
     public Instant getClosedAt() {
         return closedAt;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
     }
 }

@@ -1,11 +1,14 @@
 package com.petpuja.billing.billing;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.petpuja.billing.billing.BillLineAddOn.Snapshot;
 import com.petpuja.billing.menu.MenuItem;
+import com.petpuja.billing.menu.MenuItemAddOn;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -45,6 +48,12 @@ public class Bill {
 
 	@Column(nullable = false, precision = 12, scale = 2)
 	private BigDecimal total = BigDecimal.ZERO;
+
+	@Column(name = "discount_percent", nullable = false, precision = 5, scale = 2)
+	private BigDecimal discountPercent = BigDecimal.ZERO;
+
+	@Column(name = "discount_amount", nullable = false, precision = 12, scale = 2)
+	private BigDecimal discountAmount = BigDecimal.ZERO;
 
 	@Column(name = "table_number")
 	private Integer tableNumber;
@@ -102,16 +111,50 @@ public class Bill {
 	}
 
 	public void addLine(MenuItem menuItem, int quantity, BigDecimal unitPrice) {
+		addLine(menuItem, quantity, unitPrice, List.of());
+	}
+
+	public void addLine(MenuItem menuItem, int quantity, BigDecimal unitPrice, List<MenuItemAddOn> addOns) {
+		var snapshots = addOns.stream()
+				.map(addOn -> new Snapshot(addOn.getId(), addOn.getName(), addOn.getPrice()))
+				.toList();
+		addLineFromSnapshots(menuItem, quantity, unitPrice, snapshots);
+	}
+
+	public void addLineFromSnapshots(MenuItem menuItem, int quantity, BigDecimal unitPrice, List<Snapshot> addOns) {
 		var lineTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
-		lines.add(BillLine.create(this, menuItem, quantity, unitPrice, lineTotal));
+		lines.add(BillLine.create(this, menuItem, quantity, unitPrice, lineTotal, addOns));
 		subtotal = subtotal.add(lineTotal);
-		total = subtotal.add(tax);
+		recalculateTotal();
+	}
+
+	public BigDecimal getDiscountableSubtotal() {
+		var discountableSubtotal = BigDecimal.ZERO;
+		for (var line : lines) {
+			if (!line.isOtherSection()) {
+				discountableSubtotal = discountableSubtotal.add(line.getLineTotal());
+			}
+		}
+		return discountableSubtotal;
+	}
+
+	public void applyDiscountPercent(BigDecimal discountPercent, BigDecimal discountableSubtotal) {
+		this.discountPercent = discountPercent;
+		discountAmount = discountableSubtotal.multiply(discountPercent.movePointLeft(2))
+				.setScale(2, RoundingMode.HALF_UP);
+		recalculateTotal();
+	}
+
+	private void recalculateTotal() {
+		total = subtotal.subtract(discountAmount).add(tax);
 	}
 
 	public void clearLines() {
 		lines.clear();
 		subtotal = BigDecimal.ZERO;
-		total = subtotal.add(tax);
+		discountPercent = BigDecimal.ZERO;
+		discountAmount = BigDecimal.ZERO;
+		recalculateTotal();
 	}
 
 	public void markPaid(PaymentMethod paymentMethod, Instant paidAt) {
@@ -179,6 +222,18 @@ public class Bill {
 
 	public BigDecimal getTotal() {
 		return total;
+	}
+
+	public BigDecimal getSubtotal() {
+		return subtotal;
+	}
+
+	public BigDecimal getDiscountPercent() {
+		return discountPercent;
+	}
+
+	public BigDecimal getDiscountAmount() {
+		return discountAmount;
 	}
 
 	public List<BillLine> getLines() {

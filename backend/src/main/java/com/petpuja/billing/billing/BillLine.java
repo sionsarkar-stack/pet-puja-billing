@@ -1,9 +1,12 @@
 package com.petpuja.billing.billing;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.petpuja.billing.menu.MenuItem;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -12,6 +15,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 
 @Entity
@@ -42,25 +46,53 @@ public class BillLine {
 	@Column(name = "line_total", nullable = false, precision = 12, scale = 2)
 	private BigDecimal lineTotal;
 
+	@OneToMany(mappedBy = "billLine", cascade = CascadeType.ALL, orphanRemoval = true)
+	private List<BillLineAddOn> addOns = new ArrayList<>();
+
 	protected BillLine() {
 	}
 
-	private BillLine(Bill bill, MenuItem menuItem, int quantity, BigDecimal unitPrice, BigDecimal lineTotal) {
+	private BillLine(Bill bill, MenuItem menuItem, int quantity, BigDecimal unitPrice, BigDecimal lineTotal,
+			List<BillLineAddOn.Snapshot> addOns) {
 		this.bill = bill;
 		this.itemName = menuItem.getName();
 		this.lineTotal = lineTotal;
 		this.menuItem = menuItem;
 		this.quantity = quantity;
 		this.unitPrice = unitPrice;
+		addOns.forEach(addOn -> this.addOns.add(BillLineAddOn.create(this, addOn)));
 	}
 
 	public static BillLine create(Bill bill, MenuItem menuItem, int quantity, BigDecimal unitPrice,
 			BigDecimal lineTotal) {
-		return new BillLine(bill, menuItem, quantity, unitPrice, lineTotal);
+		return create(bill, menuItem, quantity, unitPrice, lineTotal, List.of());
+	}
+
+	public static BillLine create(Bill bill, MenuItem menuItem, int quantity, BigDecimal unitPrice,
+			BigDecimal lineTotal, List<BillLineAddOn.Snapshot> addOns) {
+		return new BillLine(bill, menuItem, quantity, unitPrice, lineTotal, addOns);
 	}
 
 	public String getItemName() {
 		return itemName;
+	}
+
+	public String getSection() {
+		return menuItem == null ? "Other" : menuItem.getSection();
+	}
+
+	public boolean isOtherSection() {
+		var section = getSection();
+		return section == null || section.isBlank()
+				|| section.trim().equalsIgnoreCase("Other")
+				|| section.trim().equalsIgnoreCase("Others");
+	}
+
+	public String getDisplayName() {
+		if (addOns.isEmpty())
+			return itemName;
+		return itemName + " + "
+				+ addOns.stream().map(BillLineAddOn::getName).collect(java.util.stream.Collectors.joining(", "));
 	}
 
 	public Long getMenuItemId() {
@@ -77,5 +109,9 @@ public class BillLine {
 
 	public BigDecimal getLineTotal() {
 		return lineTotal;
+	}
+
+	public List<BillLineAddOn> getAddOns() {
+		return addOns;
 	}
 }

@@ -37,6 +37,9 @@ describe('createOrderDocument', () => {
             reference: 'PP-123',
             restaurantName: 'The Third Break',
             seatingName: 'Table 3',
+            subtotal: 500,
+            discountPercent: 20,
+            discountAmount: 100,
             total: 400,
         })
 
@@ -48,6 +51,10 @@ describe('createOrderDocument', () => {
         expect(receiptText).toContain('Payment received. Thank you.')
         expect(receiptText).toContain('THE THIRD BREAK')
         expect(receiptText).toContain('Thank you for dining with The Third Break.')
+        expect(receiptText).toContain('Subtotal')
+        expect(receiptText).toContain('Bill discount (20.00%)')
+        expect(receiptText).toContain('- INR 100.00')
+        expect(receiptText).toContain('Final bill')
         expect(receiptText).toContain('INR 400.00')
     })
 })

@@ -33,8 +33,11 @@ describe('MenuManager', () => {
             id: 1,
             name: 'Masala Dosa',
             description: 'Crisp dosa',
+            section: 'Quick Bites',
+            subsection: '',
             discountApplied: 10,
             price: 180,
+            addOns: [],
         }
         const updatedMenuItem = { ...menuItem, discountApplied: 15, price: 195 }
         const fetchMock = vi.spyOn(globalThis, 'fetch')
@@ -52,6 +55,8 @@ describe('MenuManager', () => {
         await user.type(screen.getByLabelText('Discount applied (%)'), '10')
         await user.type(screen.getByLabelText('Price (INR)'), '180')
         await user.click(screen.getByRole('button', { name: 'Add menu item' }))
+        const quickBitesSummary = await screen.findAllByText('Quick Bites')
+        await user.click(quickBitesSummary.find((element) => element.parentElement?.tagName === 'SUMMARY')!)
 
         expect(fetchMock).toHaveBeenNthCalledWith(
             2,
@@ -60,8 +65,11 @@ describe('MenuManager', () => {
                 body: JSON.stringify({
                     name: 'Masala Dosa',
                     description: 'Crisp dosa',
+                    section: 'Quick Bites',
+                    subsection: '',
                     discountApplied: 10,
                     price: 180,
+                    addOns: [],
                 }),
                 credentials: 'include',
                 method: 'POST',
@@ -83,14 +91,82 @@ describe('MenuManager', () => {
                 body: JSON.stringify({
                     name: 'Masala Dosa',
                     description: 'Crisp dosa',
+                    section: 'Quick Bites',
+                    subsection: '',
                     discountApplied: 15,
                     price: 195,
+                    addOns: [],
                 }),
                 credentials: 'include',
                 method: 'PUT',
             }),
         )
         expect(await screen.findByText('15%')).toBeInTheDocument()
+    })
+
+    it('creates a menu item with multiple item-specific add-ons', async () => {
+        const createdItem = {
+            id: 4,
+            name: 'Chicken Sandwich',
+            description: 'Chicken sandwich',
+            section: 'Continental',
+            subsection: 'Sandwiches',
+            discountApplied: 0,
+            price: 90,
+            addOns: [
+                { id: 21, name: 'Extra cheese', price: 20 },
+                { id: 22, name: 'Grilled chicken', price: 35 },
+            ],
+        }
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse([]))
+            .mockResolvedValueOnce(jsonResponse(createdItem, 201))
+        const user = userEvent.setup()
+
+        render(<MenuManager />)
+
+        await user.type(screen.getByLabelText('Name'), createdItem.name)
+        await user.type(screen.getByLabelText('Description'), createdItem.description)
+        await user.selectOptions(screen.getByLabelText('Main section'), 'Continental')
+        expect(screen.getByRole('option', { name: 'Pizza' })).toBeInTheDocument()
+        expect(screen.queryByRole('option', { name: 'Main Course' })).not.toBeInTheDocument()
+        await user.selectOptions(screen.getByLabelText('Subsection'), 'Sandwiches')
+        await user.type(screen.getByLabelText('Price (INR)'), '90')
+        await user.click(screen.getByRole('radio', { name: 'Yes' }))
+        await user.type(screen.getByLabelText('Add-on name 1 for new-menu-item'), 'Extra cheese')
+        await user.type(screen.getByLabelText('Add-on price 1 for new-menu-item'), '20')
+        await user.click(screen.getByRole('button', { name: 'Add another add-on' }))
+        await user.type(screen.getByLabelText('Add-on name 2 for new-menu-item'), 'Grilled chicken')
+        await user.type(screen.getByLabelText('Add-on price 2 for new-menu-item'), '35')
+        await user.click(screen.getByRole('button', { name: 'Add menu item' }))
+
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/menu',
+            expect.objectContaining({
+                body: JSON.stringify({
+                    name: createdItem.name,
+                    description: createdItem.description,
+                    section: 'Continental',
+                    subsection: 'Sandwiches',
+                    discountApplied: 0,
+                    price: 90,
+                    addOns: [
+                        { id: null, name: 'Extra cheese', price: 20 },
+                        { id: null, name: 'Grilled chicken', price: 35 },
+                    ],
+                }),
+                method: 'POST',
+            }),
+        )
+        const continentalSummary = (await screen.findAllByText('Continental'))
+            .find((element) => element.parentElement?.tagName === 'SUMMARY')!
+        await user.click(continentalSummary)
+        const sandwichSummary = screen.getAllByText('Sandwiches')
+            .find((element) => element.parentElement?.tagName === 'SUMMARY')!
+        await user.click(sandwichSummary)
+        expect(screen.getByRole('table', { name: 'Saved menu items in Continental / Sandwiches' })).toBeInTheDocument()
+        expect(await screen.findByText('Extra cheese (+₹20.00), Grilled chicken (+₹35.00)')).toBeInTheDocument()
     })
 
     it('shows saved menu values in a table beneath the form', async () => {
@@ -104,8 +180,10 @@ describe('MenuManager', () => {
 
         render(<MenuManager />)
 
-        expect(await screen.findByRole('table', { name: 'Saved menu items' })).toBeInTheDocument()
-        expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument()
+        await userEvent.setup().click(await screen.findByText('Other'))
+
+        expect(await screen.findByRole('table', { name: 'Saved menu items in Other' })).toBeInTheDocument()
+        expect(screen.getByRole('columnheader', { name: 'Menu item' })).toBeInTheDocument()
         expect(screen.getByRole('columnheader', { name: 'Description' })).toBeInTheDocument()
         expect(screen.getByRole('columnheader', { name: 'Discount' })).toBeInTheDocument()
         expect(screen.getByRole('columnheader', { name: 'Price' })).toBeInTheDocument()
@@ -113,7 +191,39 @@ describe('MenuManager', () => {
         expect(screen.getByText('Crisp dosa')).toBeInTheDocument()
         expect(screen.getByText('10%')).toBeInTheDocument()
         expect(screen.getByText('₹180.00')).toBeInTheDocument()
-        expect(screen.getByText('1 item')).toBeInTheDocument()
+        expect(screen.getAllByText('1 item')).toHaveLength(2)
+    })
+
+    it('keeps section and subsection lists collapsed until opened', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([{
+            id: 7,
+            name: 'Classic Pizza',
+            description: 'Classic pizza',
+            section: 'Continental',
+            subsection: 'Pizza',
+            discountApplied: 0,
+            price: 65,
+            addOns: [],
+        }]))
+        const user = userEvent.setup()
+
+        render(<MenuManager canManage={false} />)
+
+        const continentalSummaryText = (await screen.findAllByText('Continental'))
+            .find((element) => element.parentElement?.tagName === 'SUMMARY')!
+        const continentalDisclosure = continentalSummaryText.parentElement!
+        expect(continentalDisclosure).not.toHaveAttribute('open')
+        expect(screen.getByRole('table', { name: 'Saved menu items in Continental / Pizza' })
+            .closest('details')).not.toHaveAttribute('open')
+
+        await user.click(continentalSummaryText)
+        const pizzaSummaryText = screen.getAllByText('Pizza')
+            .find((element) => element.parentElement?.tagName === 'SUMMARY')!
+        const pizzaDisclosure = pizzaSummaryText.parentElement!
+        expect(pizzaDisclosure).not.toHaveAttribute('open')
+
+        await user.click(pizzaSummaryText)
+        expect(screen.getByRole('table', { name: 'Saved menu items in Continental / Pizza' })).toBeInTheDocument()
     })
 
     it('shows saved menu values without mutation controls when read-only', async () => {
@@ -128,8 +238,9 @@ describe('MenuManager', () => {
         render(<MenuManager canManage={false} />)
 
         expect(await screen.findByRole('heading', { name: 'Menu' })).toBeInTheDocument()
+        await userEvent.setup().click(screen.getByText('Other'))
         expect(screen.getByText('Masala Dosa')).toBeInTheDocument()
-        expect(screen.getByRole('table', { name: 'Saved menu items' })).toBeInTheDocument()
+        expect(screen.getByRole('table', { name: 'Saved menu items in Other' })).toBeInTheDocument()
         expect(screen.queryByLabelText('Name')).not.toBeInTheDocument()
         expect(screen.queryByRole('button', { name: 'Edit Masala Dosa' })).not.toBeInTheDocument()
         expect(screen.queryByRole('button', { name: 'Delete Masala Dosa' })).not.toBeInTheDocument()
@@ -151,6 +262,7 @@ describe('MenuManager', () => {
 
         render(<MenuManager />)
 
+        await userEvent.setup().click(await screen.findByText('Other'))
         await screen.findByRole('button', { name: 'Delete Masala Dosa' })
         await user.click(screen.getByRole('button', { name: 'Delete Masala Dosa' }))
 
@@ -181,6 +293,7 @@ describe('MenuManager', () => {
 
         render(<MenuManager />)
 
+        await user.click(await screen.findByText('Other'))
         await user.click(await screen.findByRole('button', { name: 'Delete Masala Dosa' }))
         await user.click(screen.getByRole('button', { name: 'Delete item' }))
 

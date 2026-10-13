@@ -18,6 +18,7 @@ import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 @SpringBootTest
@@ -100,6 +101,45 @@ class MenuControllerTest {
                                                 {"name":"Masala Dosa","description":"Crisp dosa","discountApplied":100.01,"price":180}
                                                 """))
                                 .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @Transactional
+        void createsAndUpdatesItemSpecificAddOnsInTheirMenuSection() throws Exception {
+                var ownerSession = signIn();
+
+                mockMvc.perform(post("/api/menu")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Chicken Sandwich","description":"Grilled chicken sandwich","section":"Continental","subsection":"Sandwiches","discountApplied":0,"price":90,"addOns":[{"name":"Extra cheese","price":20},{"name":"Grilled chicken","price":35}]}
+                                                """))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.section").value("Continental"))
+                                .andExpect(jsonPath("$.subsection").value("Sandwiches"))
+                                .andExpect(jsonPath("$.addOns.length()").value(2))
+                                .andExpect(jsonPath("$.addOns[0].name").value("Extra cheese"));
+
+                var createdItem = menuItemRepository.findAll().get(0);
+                var extraCheeseId = createdItem.getAddOns().get(0).getId();
+
+                mockMvc.perform(put("/api/menu/{menuItemId}", createdItem.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Chicken Sandwich","description":"Grilled chicken sandwich","section":"Continental","subsection":"Sandwiches","discountApplied":0,"price":95,"addOns":[{"id":%d,"name":"Extra cheese","price":25}]}
+                                                """
+                                                .formatted(extraCheeseId)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.addOns.length()").value(1))
+                                .andExpect(jsonPath("$.addOns[0].price").value(25))
+                                .andExpect(jsonPath("$.section").value("Continental"))
+                                .andExpect(jsonPath("$.subsection").value("Sandwiches"));
+
+                mockMvc.perform(get("/api/menu").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$[0].name").value("Chicken Sandwich"))
+                                .andExpect(jsonPath("$[0].addOns.length()").value(1));
         }
 
         private MockHttpSession signIn() throws Exception {

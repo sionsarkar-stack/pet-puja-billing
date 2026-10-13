@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf'
-import { getPaymentMethodLabel, type PaymentMethod } from './financial'
+import { formatDateTime, getPaymentMethodLabel, type PaymentMethod } from './financial'
 
 export type OrderDocument = {
     documentTitle: 'INVOICE' | 'PAYMENT RECEIPT'
@@ -10,6 +10,9 @@ export type OrderDocument = {
     reference: string
     restaurantName: string
     seatingName: string
+    subtotal?: number
+    discountPercent?: number
+    discountAmount?: number
     total: number
 }
 
@@ -70,7 +73,7 @@ export function createOrderDocument(order: OrderDocument) {
     document.setTextColor(42, 48, 43)
     document.setFontSize(10)
     document.text(`${referenceLabel} ${order.reference}`, pageLeft, 152)
-    document.text(`Issued: ${order.issuedAt.toLocaleString('en-IN')}`, pageLeft, 170)
+    document.text(`Issued: ${formatDateTime(order.issuedAt.toISOString())}`, pageLeft, 170)
     document.text(`Seating: ${order.seatingName}`, pageRight, 152, { align: 'right' })
     document.text(`Payment status: ${isPaid ? 'Paid' : 'Pending'}`, pageRight, 170, { align: 'right' })
 
@@ -128,12 +131,21 @@ export function createOrderDocument(order: OrderDocument) {
     document.line(330, totalTop, pageRight, totalTop)
     document.setFontSize(10)
     document.setTextColor(42, 48, 43)
-    document.text('Order total', 442, totalTop + 24, { align: 'right' })
+    const subtotal = order.subtotal ?? order.total + (order.discountAmount ?? 0)
+    document.text('Subtotal', 442, totalTop + 18, { align: 'right' })
+    document.text(`INR ${subtotal.toFixed(2)}`, pageRight, totalTop + 18, { align: 'right' })
+    const hasBillDiscount = (order.discountAmount ?? 0) > 0
+    if (hasBillDiscount) {
+        document.text(`Bill discount (${(order.discountPercent ?? 0).toFixed(2)}%)`, 442, totalTop + 36, { align: 'right' })
+        document.text(`- INR ${(order.discountAmount ?? 0).toFixed(2)}`, pageRight, totalTop + 36, { align: 'right' })
+    }
+    const totalY = totalTop + (hasBillDiscount ? 62 : 44)
+    document.text('Final bill', 442, totalY, { align: 'right' })
     document.setFontSize(16)
-    document.text(`INR ${order.total.toFixed(2)}`, pageRight, totalTop + 24, { align: 'right' })
+    document.text(`INR ${order.total.toFixed(2)}`, pageRight, totalY, { align: 'right' })
     document.setFontSize(9)
     document.setTextColor(91, 102, 92)
-    document.text(isPaid ? 'Payment received. Thank you.' : 'Please settle the bill at the counter.', pageLeft, totalTop + 24)
+    document.text(isPaid ? 'Payment received. Thank you.' : 'Please settle the bill at the counter.', pageLeft, totalY)
     addFooter()
 
     return document.output('blob')

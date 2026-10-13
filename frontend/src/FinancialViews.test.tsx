@@ -2,6 +2,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RestaurantConfigurationContext } from './RestaurantConfiguration'
+import { formatDateTime, formatTime, getDateInputBoundary, getDateInputValue } from './financial'
 import BalanceSheetManager from './BalanceSheetManager'
 import ExpensesManager from './ExpensesManager'
 import HistoryManager from './HistoryManager'
@@ -66,6 +67,17 @@ describe('financial views', () => {
         cleanup()
         vi.restoreAllMocks()
         vi.clearAllMocks()
+    })
+
+    it('formats timestamps and date boundaries in IST independent of local timezone', () => {
+        const timestamp = '2026-10-12T12:52:00Z'
+
+        expect(formatDateTime(timestamp)).toContain('12 Oct 2026')
+        expect(formatDateTime(timestamp)).toContain('6:22 pm')
+        expect(formatTime(timestamp)).toBe('6:22 pm')
+        expect(getDateInputValue('2026-10-12T20:00:00Z')).toBe('2026-10-13')
+        expect(getDateInputBoundary('2026-10-13')?.toISOString()).toBe('2026-10-12T18:30:00.000Z')
+        expect(getDateInputBoundary('2026-10-13', true)?.toISOString()).toBe('2026-10-13T18:29:59.999Z')
     })
 
     it('shows paid history with the table, payment method, and amount', async () => {

@@ -5,19 +5,23 @@ import java.time.Instant;
 import java.util.List;
 
 public record PaidOrderResponse(
-        Long id,
-        String billNumber,
-        String tableName,
-        PaymentMethod paymentMethod,
-        Instant paidAt,
-        BigDecimal total,
-        List<PaidOrderLineResponse> lines,
-        BillRefundResponse refund) {
+                Long id,
+                String billNumber,
+                String tableName,
+                PaymentMethod paymentMethod,
+                Instant paidAt,
+                BigDecimal subtotal,
+                BigDecimal discountPercent,
+                BigDecimal discountAmount,
+                BigDecimal total,
+                List<PaidOrderLineResponse> lines,
+                BillRefundResponse refund) {
 
-    public record PaidOrderLineResponse(
-            String itemName,
-            int quantity,
-            BigDecimal unitPrice,
-            BigDecimal lineTotal) {
-    }
+        public record PaidOrderLineResponse(
+                        String itemName,
+                        String section,
+                        int quantity,
+                        BigDecimal unitPrice,
+                        BigDecimal lineTotal) {
+        }
 }

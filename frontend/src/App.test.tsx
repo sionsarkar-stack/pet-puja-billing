@@ -43,8 +43,8 @@ describe('App', () => {
       .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
       .mockResolvedValueOnce(jsonResponse({ authenticated: false, username: null }))
       .mockResolvedValueOnce(jsonResponse({ mode: 'ADMIN', username: 'restaurant-owner' }))
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ active: false, businessDate: null, startedAt: null }))
+      .mockResolvedValueOnce(jsonResponse({ available: true }))
     const user = userEvent.setup()
 
     render(<App splashDuration={0} />)
@@ -63,10 +63,10 @@ describe('App', () => {
         method: 'POST',
       }),
     )
-    expect(await screen.findByRole('heading', { name: 'Table orders' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Start or end a business day' })).toBeInTheDocument()
     expect(screen.getByText('Admin mode')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Table' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'Menu' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Table' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Expenses' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Daily close' })).toBeInTheDocument()
@@ -96,12 +96,12 @@ describe('App', () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse(restaurantConfiguration))
       .mockResolvedValueOnce(jsonResponse({ authenticated: true, mode: 'CAPTAIN', username: 'captain' }))
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ active: false, businessDate: null, startedAt: null }))
 
     render(<App splashDuration={0} />)
 
-    expect(await screen.findByRole('heading', { name: 'Table orders' })).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: 'Table' })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
     expect(screen.getByText('Captain mode')).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Expenses' })).not.toBeInTheDocument()
   })

@@ -87,6 +87,8 @@ public class SecurityConfiguration {
                                                 .securityContextRepository(securityContextRepository)
                                                 .requireExplicitSave(true))
                                 .authorizeHttpRequests(requests -> requests
+                                                .requestMatchers(HttpMethod.GET, "/api/daily-closings/status")
+                                                .hasAnyRole("ADMIN", "CAPTAIN")
                                                 .requestMatchers("/api/auth/login", "/api/auth/logout",
                                                                 "/api/auth/session", "/api/health",
                                                                 "/api/public-config", "/actuator/health", "/error")
@@ -99,6 +101,10 @@ public class SecurityConfiguration {
                                                 .hasRole("ADMIN")
                                                 .requestMatchers(HttpMethod.PUT, "/api/menu/**").hasRole("ADMIN")
                                                 .requestMatchers(HttpMethod.DELETE, "/api/menu/**").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PUT, "/api/discount-settings")
+                                                .hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PUT, "/api/discount-settings/**")
+                                                .hasRole("ADMIN")
                                                 .anyRequest().hasAnyRole("ADMIN", "CAPTAIN"))
                                 .exceptionHandling(exceptions -> exceptions
                                                 .authenticationEntryPoint((request, response, exception) -> response

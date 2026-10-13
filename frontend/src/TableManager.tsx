@@ -3,12 +3,14 @@ import { jsPDF } from 'jspdf'
 import { QRCodeSVG } from 'qrcode.react'
 import ConfirmationDialog from './ConfirmationDialog'
 import { createOrderDocument } from './orderDocument'
+import { groupMenuItems } from './menuSections'
 import { useRestaurantConfiguration } from './RestaurantConfiguration'
 import { createUpiPaymentUri } from './upiPayment'
 import {
     apiBaseUrl,
     currencyFormatter,
     formatDateTime,
+    formatTime,
     getPaymentMethodLabel,
     isOpenOrder,
     isOpenOrders,
@@ -22,7 +24,16 @@ type MenuItem = {
     id: number
     name: string
     description: string | null
+    section: string
+    subsection: string
     discountApplied: number
+    price: number
+    addOns: MenuAddOn[]
+}
+
+type MenuAddOn = {
+    id: number
+    name: string
     price: number
 }
 
@@ -31,11 +42,16 @@ type OrderLine = {
     name: string
     quantity: number
     unitPrice: number
+    addOns: MenuAddOn[]
 }
 
 type OpenOrderState = {
     completed: boolean
     lines: OrderLine[]
+    subtotal?: number
+    discountPercent?: number
+    discountAmount?: number
+    total?: number
 }
 
 type TableMessage = {
@@ -99,22 +115,49 @@ function isMenuItem(value: unknown): value is MenuItem {
         && typeof value.name === 'string'
         && 'description' in value
         && (typeof value.description === 'string' || value.description === null)
+        && (!('section' in value) || typeof value.section === 'string')
+        && (!('subsection' in value) || typeof value.subsection === 'string')
         && 'discountApplied' in value
         && typeof value.discountApplied === 'number'
         && 'price' in value
         && typeof value.price === 'number'
+        && (!('addOns' in value) || (Array.isArray(value.addOns) && value.addOns.every((addOn) =>
+            typeof addOn === 'object' && addOn !== null
+            && 'id' in addOn && typeof addOn.id === 'number'
+            && 'name' in addOn && typeof addOn.name === 'string'
+            && 'price' in addOn && typeof addOn.price === 'number')))
 }
 
 function isMenuItems(value: unknown): value is MenuItem[] {
     return Array.isArray(value) && value.every(isMenuItem)
 }
 
+function normalizeMenuItem(menuItem: MenuItem): MenuItem {
+    return {
+        ...menuItem,
+        section: menuItem.section ?? 'Other',
+        subsection: menuItem.subsection ?? '',
+        addOns: menuItem.addOns ?? [],
+    }
+}
+
 function roundCurrency(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
-function getUnitPrice(menuItem: MenuItem) {
-    return roundCurrency(menuItem.price * (1 - menuItem.discountApplied / 100))
+function getUnitPrice(menuItem: MenuItem, addOns: MenuAddOn[] = []) {
+    const discountedPrice = menuItem.price * (1 - menuItem.discountApplied / 100)
+    return roundCurrency(discountedPrice + addOns.reduce((total, addOn) => total + addOn.price, 0))
+}
+
+function getOrderLineKey(orderLine: Pick<OrderLine, 'menuItemId' | 'addOns'>) {
+    const addOnIds = orderLine.addOns.map((addOn) => addOn.id).sort((leftId, rightId) => leftId - rightId)
+    return `${orderLine.menuItemId}:${addOnIds.join(',')}`
+}
+
+function getOrderLineDisplayName(orderLine: OrderLine) {
+    if (orderLine.addOns.length === 0) return orderLine.name
+    return `${orderLine.name} + ${orderLine.addOns.map((addOn) => addOn.name).join(', ')}`
 }
 
 function getLineTotal(orderLine: OrderLine) {
@@ -130,7 +173,7 @@ function getSeatingStatus(order: OpenOrderState | undefined): SeatingStatus {
         return { detail: 'Start an order', label: 'Available', tone: 'available' }
     }
 
-    const total = currencyFormatter.format(getOrderTotal(order.lines))
+    const total = currencyFormatter.format(order.total ?? getOrderTotal(order.lines))
     if (order.completed) {
         return { detail: `${total} awaiting payment`, label: 'Ready', tone: 'ready' }
     }
@@ -146,6 +189,7 @@ function toOrderLines(openOrder: OpenOrder): OrderLine[] {
         name: line.itemName,
         quantity: line.quantity,
         unitPrice: line.unitPrice,
+        addOns: line.addOns ?? [],
     }))
 }
 
@@ -153,6 +197,10 @@ function toOpenOrderState(openOrder: OpenOrder): OpenOrderState {
     return {
         completed: openOrder.completed,
         lines: toOrderLines(openOrder),
+        subtotal: openOrder.subtotal,
+        discountPercent: openOrder.discountPercent,
+        discountAmount: openOrder.discountAmount,
+        total: openOrder.total,
     }
 }
 
@@ -165,8 +213,19 @@ function getReceiptFileName(billNumber: string) {
 }
 
 function getInvoiceReference(createdAt: Date, seatingName: string) {
-    const datePart = `${createdAt.getFullYear()}${String(createdAt.getMonth() + 1).padStart(2, '0')}${String(createdAt.getDate()).padStart(2, '0')}`
-    const timePart = `${String(createdAt.getHours()).padStart(2, '0')}${String(createdAt.getMinutes()).padStart(2, '0')}${String(createdAt.getSeconds()).padStart(2, '0')}`
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        day: '2-digit',
+        hour: '2-digit',
+        hourCycle: 'h23',
+        minute: '2-digit',
+        month: '2-digit',
+        second: '2-digit',
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+    }).formatToParts(createdAt)
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value ?? ''
+    const datePart = `${part('year')}${part('month')}${part('day')}`
+    const timePart = `${part('hour')}${part('minute')}${part('second')}`
     const seatingPart = seatingName.toUpperCase().replaceAll(' ', '-')
 
     return `PP-${datePart}-${timePart}-${seatingPart}`
@@ -185,6 +244,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
     const [outdoorCount, setOutdoorCount] = useState(initialOutdoorCount)
     const [selectedSeatingId, setSelectedSeatingId] = useState<string | null>(null)
     const [selectedMenuItemId, setSelectedMenuItemId] = useState('')
+    const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([])
     const [quantity, setQuantity] = useState('1')
     const [ordersBySeating, setOrdersBySeating] = useState<Partial<Record<string, OpenOrderState>>>({})
     const [isOrderSaving, setIsOrderSaving] = useState(false)
@@ -216,7 +276,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                     const items: unknown = await response.json()
                     if (!isMenuItems(items)) throw new Error('Menu response has an unexpected shape')
 
-                    setMenuItems(items)
+                    setMenuItems(items.map(normalizeMenuItem))
                 })
 
             const openOrdersLoad = fetch(`${apiBaseUrl}/api/open-orders`, {
@@ -288,6 +348,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
     const outdoorSpots = createSeatingSpots('outdoor', 'Outdoor', outdoorCount)
     const selectedSeating = [...tableSpots, ...outdoorSpots].find((spot) => spot.id === selectedSeatingId) ?? null
     const selectedMenuItem = menuItems.find((menuItem) => String(menuItem.id) === selectedMenuItemId)
+    const selectedAddOns = selectedMenuItem?.addOns.filter((addOn) => selectedAddOnIds.includes(addOn.id)) ?? []
     const parsedQuantity = Number(quantity)
     const hasValidQuantity = Number.isInteger(parsedQuantity) && parsedQuantity >= 1
     const selectedOpenOrder = selectedSeating === null ? null : ordersBySeating[selectedSeating.id] ?? null
@@ -296,11 +357,22 @@ function TableManager({ isActive = true }: TableManagerProps) {
     const hasJustPaid = selectedSeating !== null && lastPaidSeatingId === selectedSeating.id
     const hasFailedOrderSave = selectedSeating !== null && failedOrderSave?.seatingId === selectedSeating.id
     const hasRecentOrderSave = selectedSeating !== null && lastOrderSave?.seatingId === selectedSeating.id
-    const selectedOrderTotal = getOrderTotal(selectedOrderLines)
+    const selectedOrderSubtotal = selectedOpenOrder?.subtotal ?? getOrderTotal(selectedOrderLines)
+    const selectedDiscountPercent = selectedOpenOrder?.discountPercent ?? 0
+    const selectedDiscountAmount = selectedOpenOrder?.discountAmount ?? 0
+    const selectedOrderTotal = selectedOpenOrder?.total ?? roundCurrency(selectedOrderSubtotal - selectedDiscountAmount)
     const draftLineTotal = selectedMenuItem && hasValidQuantity
-        ? roundCurrency(getUnitPrice(selectedMenuItem) * parsedQuantity)
+        ? roundCurrency(getUnitPrice(selectedMenuItem, selectedAddOns) * parsedQuantity)
         : null
     const isOrderActionInProgress = isOrderSaving || paymentMethodInProgress !== null || pendingPaymentMethod !== null
+    const groupedMenuItems = groupMenuItems(menuItems).flatMap(({ section, items, subsections }) => [
+        ...(items.length > 0 ? [{ section, subsection: '', items }] : []),
+        ...subsections.map(({ subsection, items: subsectionItems }) => ({
+            section,
+            subsection,
+            items: subsectionItems,
+        })),
+    ])
 
     function selectSeating(seatingId: string) {
         setInvoiceUrl(null)
@@ -315,6 +387,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                 lines: orderLines.map((orderLine) => ({
                     menuItemId: orderLine.menuItemId,
                     quantity: orderLine.quantity,
+                    addOnIds: orderLine.addOns.map((addOn) => addOn.id),
                 })),
                 tableName,
             }),
@@ -349,6 +422,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
         })
         if (intent.resetOrderDraft) {
             setSelectedMenuItemId('')
+            setSelectedAddOnIds([])
             setQuantity('1')
         }
         if (intent.resetInvoice) {
@@ -396,27 +470,31 @@ function TableManager({ isActive = true }: TableManagerProps) {
             return
         }
 
-        const unitPrice = getUnitPrice(selectedMenuItem)
+        const unitPrice = getUnitPrice(selectedMenuItem, selectedAddOns)
+        const newOrderLine: OrderLine = {
+            menuItemId: selectedMenuItem.id,
+            name: selectedMenuItem.name,
+            quantity: parsedQuantity,
+            unitPrice,
+            addOns: selectedAddOns,
+        }
+        const newOrderLineKey = getOrderLineKey(newOrderLine)
         const matchingOrderLine = selectedOrderLines.find(
-            (orderLine) => orderLine.menuItemId === selectedMenuItem.id,
+            (orderLine) => getOrderLineKey(orderLine) === newOrderLineKey,
         )
         const nextOrderLines = matchingOrderLine
             ? selectedOrderLines.map((orderLine) => orderLine.menuItemId === selectedMenuItem.id
+                && getOrderLineKey(orderLine) === newOrderLineKey
                 ? { ...orderLine, quantity: orderLine.quantity + parsedQuantity }
                 : orderLine)
-            : [...selectedOrderLines, {
-                menuItemId: selectedMenuItem.id,
-                name: selectedMenuItem.name,
-                quantity: parsedQuantity,
-                unitPrice,
-            }]
+            : [...selectedOrderLines, newOrderLine]
 
         void persistOrder({
             completed: false,
             orderLines: nextOrderLines,
             resetOrderDraft: true,
             seatingId: selectedSeating.id,
-            successMessage: `${selectedMenuItem.name} added to ${selectedSeating.name}.`,
+            successMessage: `${getOrderLineDisplayName(newOrderLine)} added to ${selectedSeating.name}.`,
             tableName: selectedSeating.name,
         })
     }
@@ -425,13 +503,13 @@ function TableManager({ isActive = true }: TableManagerProps) {
         if (selectedSeating === null) return
 
         const nextOrderLines = selectedOrderLines.filter(
-            (currentOrderLine) => currentOrderLine.menuItemId !== orderLine.menuItemId,
+            (currentOrderLine) => getOrderLineKey(currentOrderLine) !== getOrderLineKey(orderLine),
         )
         void persistOrder({
             completed: false,
             orderLines: nextOrderLines,
             seatingId: selectedSeating.id,
-            successMessage: `${orderLine.name} removed from ${selectedSeating.name}.`,
+            successMessage: `${getOrderLineDisplayName(orderLine)} removed from ${selectedSeating.name}.`,
             tableName: selectedSeating.name,
         })
     }
@@ -508,7 +586,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
         invoice.setTextColor(42, 48, 43)
         invoice.setFontSize(10)
         invoice.text(`Invoice no. ${invoiceReference}`, pageLeft, 152)
-        invoice.text(`Issued: ${createdAt.toLocaleString('en-IN')}`, pageLeft, 170)
+        invoice.text(`Issued: ${formatDateTime(createdAt.toISOString())}`, pageLeft, 170)
         invoice.text(`Seating: ${selectedSeating.name}`, pageRight, 152, { align: 'right' })
         invoice.text('Payment status: Pending', pageRight, 170, { align: 'right' })
         invoice.setDrawColor(205, 210, 204)
@@ -519,7 +597,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
         cursorY += 26
 
         for (const [index, orderLine] of selectedOrderLines.entries()) {
-            const itemLines = invoice.splitTextToSize(orderLine.name, 244)
+            const itemLines = invoice.splitTextToSize(getOrderLineDisplayName(orderLine), 244)
             const rowHeight = Math.max(32, itemLines.length * 12 + 16)
 
             if (cursorY + rowHeight > 700) {
@@ -561,12 +639,20 @@ function TableManager({ isActive = true }: TableManagerProps) {
         invoice.line(330, totalTop, pageRight, totalTop)
         invoice.setFontSize(10)
         invoice.setTextColor(42, 48, 43)
-        invoice.text('Order total', 442, totalTop + 24, { align: 'right' })
+        invoice.text('Subtotal', 442, totalTop + 18, { align: 'right' })
+        invoice.text(`INR ${selectedOrderSubtotal.toFixed(2)}`, pageRight, totalTop + 18, { align: 'right' })
+        const hasBillDiscount = selectedDiscountAmount > 0
+        if (hasBillDiscount) {
+            invoice.text(`Bill discount (${selectedDiscountPercent.toFixed(2)}%)`, 442, totalTop + 36, { align: 'right' })
+            invoice.text(`- INR ${selectedDiscountAmount.toFixed(2)}`, pageRight, totalTop + 36, { align: 'right' })
+        }
+        const totalY = totalTop + (hasBillDiscount ? 62 : 44)
+        invoice.text('Final bill', 442, totalY, { align: 'right' })
         invoice.setFontSize(16)
-        invoice.text(`INR ${selectedOrderTotal.toFixed(2)}`, pageRight, totalTop + 24, { align: 'right' })
+        invoice.text(`INR ${selectedOrderTotal.toFixed(2)}`, pageRight, totalY, { align: 'right' })
         invoice.setFontSize(9)
         invoice.setTextColor(91, 102, 92)
-        invoice.text('Please settle the bill at the counter.', pageLeft, totalTop + 24)
+        invoice.text('Please settle the bill at the counter.', pageLeft, totalY)
         addInvoiceFooter()
         setInvoiceUrl(URL.createObjectURL(invoice.output('blob')))
     }
@@ -584,6 +670,9 @@ function TableManager({ isActive = true }: TableManagerProps) {
             reference: lastPaidOrder.billNumber,
             restaurantName,
             seatingName: lastPaidOrder.tableName,
+            subtotal: lastPaidOrder.subtotal ?? lastPaidOrder.total + (lastPaidOrder.discountAmount ?? 0),
+            discountPercent: lastPaidOrder.discountPercent ?? 0,
+            discountAmount: lastPaidOrder.discountAmount ?? 0,
             total: lastPaidOrder.total,
         })))
     }
@@ -612,6 +701,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
         setMessage(null)
         setQuantity('1')
         setSelectedMenuItemId('')
+        setSelectedAddOnIds([])
         setSelectedSeatingId(null)
     }
 
@@ -797,17 +887,49 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                         <select
                                             disabled={isOrderActionInProgress}
                                             id="table-menu-item"
-                                            onChange={(event) => setSelectedMenuItemId(event.target.value)}
+                                            onChange={(event) => {
+                                                setSelectedMenuItemId(event.target.value)
+                                                setSelectedAddOnIds([])
+                                            }}
                                             value={selectedMenuItemId}
                                         >
                                             <option value="">Select a dish</option>
-                                            {menuItems.map((menuItem) => (
-                                                <option key={menuItem.id} value={menuItem.id}>
-                                                    {menuItem.name} - {currencyFormatter.format(getUnitPrice(menuItem))}
-                                                </option>
+                                            {groupedMenuItems.map(({ section, subsection, items }) => (
+                                                <optgroup
+                                                    key={`${section}-${subsection || 'items'}`}
+                                                    label={subsection ? `${section} / ${subsection}` : section}
+                                                >
+                                                    {items.map((menuItem) => (
+                                                        <option key={menuItem.id} value={menuItem.id}>
+                                                            {menuItem.name} - {currencyFormatter.format(getUnitPrice(menuItem))}
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
                                             ))}
                                         </select>
                                     </div>
+
+                                    {selectedMenuItem && selectedMenuItem.addOns.length > 0 && (
+                                        <fieldset className="table-order-addons" disabled={isOrderActionInProgress}>
+                                            <legend>Add-ons for {selectedMenuItem.name}</legend>
+                                            <div className="table-order-addon-options">
+                                                {selectedMenuItem.addOns.map((addOn) => (
+                                                    <label key={addOn.id}>
+                                                        <input
+                                                            aria-label={`Add ${addOn.name}`}
+                                                            checked={selectedAddOnIds.includes(addOn.id)}
+                                                            onChange={(event) => setSelectedAddOnIds((currentIds) => event.target.checked
+                                                                ? [...currentIds, addOn.id]
+                                                                : currentIds.filter((id) => id !== addOn.id))}
+                                                            type="checkbox"
+                                                        />
+                                                        <span>{addOn.name}</span>
+                                                        <strong>+{currencyFormatter.format(addOn.price)}</strong>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </fieldset>
+                                    )}
 
                                     <div className="field-group table-order-quantity">
                                         <label htmlFor="table-order-quantity">Quantity</label>
@@ -881,7 +1003,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                             )}
                             {hasRecentOrderSave && (
                                 <p className="table-order-save-status" role="status">
-                                    Last saved at {lastOrderSave.savedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                    Last saved at {formatTime(lastOrderSave.savedAt.toISOString())}
                                 </p>
                             )}
                             {hasFailedOrderSave && (
@@ -961,14 +1083,14 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                             </thead>
                                             <tbody>
                                                 {selectedOrderLines.map((orderLine) => (
-                                                    <tr key={orderLine.menuItemId}>
-                                                        <td>{orderLine.name}</td>
+                                                    <tr key={getOrderLineKey(orderLine)}>
+                                                        <td>{getOrderLineDisplayName(orderLine)}</td>
                                                         <td>{orderLine.quantity}</td>
                                                         <td>{currencyFormatter.format(orderLine.unitPrice)}</td>
                                                         <td>{currencyFormatter.format(getLineTotal(orderLine))}</td>
                                                         <td>
                                                             <button
-                                                                aria-label={`Remove ${orderLine.name} from ${selectedSeating.name}`}
+                                                                aria-label={`Remove ${getOrderLineDisplayName(orderLine)} from ${selectedSeating.name}`}
                                                                 className="table-order-remove"
                                                                 disabled={isOrderActionInProgress}
                                                                 onClick={() => removeOrderLine(orderLine)}
@@ -982,7 +1104,19 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                             </tbody>
                                             <tfoot>
                                                 <tr>
-                                                    <th colSpan={3} scope="row">Total price</th>
+                                                    <th colSpan={3} scope="row">Subtotal</th>
+                                                    <td>{currencyFormatter.format(selectedOrderSubtotal)}</td>
+                                                    <td></td>
+                                                </tr>
+                                                {selectedDiscountAmount > 0 && (
+                                                    <tr>
+                                                        <th colSpan={3} scope="row">Bill discount ({selectedDiscountPercent.toFixed(2)}%)</th>
+                                                        <td>-{currencyFormatter.format(selectedDiscountAmount)}</td>
+                                                        <td></td>
+                                                    </tr>
+                                                )}
+                                                <tr>
+                                                    <th colSpan={3} scope="row">Final bill</th>
                                                     <td>{currencyFormatter.format(selectedOrderTotal)}</td>
                                                     <td></td>
                                                 </tr>

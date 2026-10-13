@@ -1,0 +1,728 @@
+[
+    {
+        "name": "Boiled Maggi (Plain)",
+        "description": "Plain Maggi noodles boiled and served hot.",
+        "discountApplied": 0,
+        "price": 25
+    },
+    {
+        "name": "Boiled Maggi (Veg)",
+        "description": "Boiled Maggi noodles cooked with mixed vegetables.",
+        "discountApplied": 0,
+        "price": 35
+    },
+    {
+        "name": "Fried Maggi (Plain)",
+        "description": "Plain Maggi noodles tossed on the pan.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Fried Maggi (Veg)",
+        "description": "Pan-fried Maggi noodles with mixed vegetables.",
+        "discountApplied": 0,
+        "price": 40
+    },
+    {
+        "name": "Add-on - Cheese",
+        "description": "Cheese add-on for a compatible dish.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Add-on - Egg",
+        "description": "Egg add-on for a compatible dish.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Boiled Egg (Poultry)",
+        "description": "One boiled poultry egg.",
+        "discountApplied": 0,
+        "price": 12
+    },
+    {
+        "name": "Boiled Egg (Duck)",
+        "description": "One boiled duck egg.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Toast (3 slices) - Butter",
+        "description": "Three slices of toast with butter.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Toast (3 slices) - Egg",
+        "description": "Three slices of toast served with egg.",
+        "discountApplied": 0,
+        "price": 35
+    },
+    {
+        "name": "Toast (3 slices) - French Toast",
+        "description": "Three slices prepared French-toast style.",
+        "discountApplied": 0,
+        "price": 40
+    },
+    {
+        "name": "Egg Poach",
+        "description": "Poached egg served freshly prepared.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Egg Omelette",
+        "description": "Classic freshly cooked egg omelette.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Egg Cheese Omelette",
+        "description": "Egg omelette cooked with cheese.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Chicken Stew (with 3 slices)",
+        "description": "Chicken stew served with three slices of bread.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Small English Platter",
+        "description": "Butter toast, sausage, egg poach, and tossed vegetables.",
+        "discountApplied": 0,
+        "price": 160
+    },
+    {
+        "name": "Green Salad",
+        "description": "Fresh green salad.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Corn Salad",
+        "description": "Salad tossed with sweet corn.",
+        "discountApplied": 0,
+        "price": 50
+    },
+    {
+        "name": "Egg-Chicken Salad",
+        "description": "Salad with egg and chicken.",
+        "discountApplied": 0,
+        "price": 90
+    },
+    {
+        "name": "Gymboy Salad",
+        "description": "Hearty mixed salad.",
+        "discountApplied": 0,
+        "price": 100
+    },
+    {
+        "name": "Chicken Momo - Steamed",
+        "description": "Steamed chicken momos.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Chicken Momo - Fried",
+        "description": "Fried chicken momos.",
+        "discountApplied": 0,
+        "price": 70
+    },
+    {
+        "name": "Chicken Momo - Pan Fried",
+        "description": "Pan-fried chicken momos.",
+        "discountApplied": 0,
+        "price": 90
+    },
+    {
+        "name": "Veg Momo - Steamed",
+        "description": "Steamed vegetable momos.",
+        "discountApplied": 0,
+        "price": 50
+    },
+    {
+        "name": "Veg Momo - Fried",
+        "description": "Fried vegetable momos.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Veg Momo - Pan Fried",
+        "description": "Pan-fried vegetable momos.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Clear Soup - Veg",
+        "description": "Light clear soup with vegetables.",
+        "discountApplied": 0,
+        "price": 40
+    },
+    {
+        "name": "Clear Soup - Chicken",
+        "description": "Light clear soup with chicken.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Manchow Soup - Veg",
+        "description": "Spiced vegetable Manchow soup.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Manchow Soup - Chicken",
+        "description": "Spiced chicken Manchow soup.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Hot & Sour Soup - Veg",
+        "description": "Tangy hot-and-sour soup with vegetables.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Hot & Sour Soup - Chicken",
+        "description": "Tangy hot-and-sour soup with chicken.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Milk Tea - Regular",
+        "description": "Regular serving of hot milk tea.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Milk Tea - Large",
+        "description": "Large serving of hot milk tea.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Black Tea - Regular",
+        "description": "Regular serving of hot black tea.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Black Tea - Large",
+        "description": "Large serving of hot black tea.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Green Tea - Regular",
+        "description": "Regular serving of hot green tea.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Green Tea - Large",
+        "description": "Large serving of hot green tea.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Lemon Masala Tea - Regular",
+        "description": "Regular lemon masala tea.",
+        "discountApplied": 0,
+        "price": 12
+    },
+    {
+        "name": "Lemon Masala Tea - Large",
+        "description": "Large lemon masala tea.",
+        "discountApplied": 0,
+        "price": 18
+    },
+    {
+        "name": "Black Coffee - Regular",
+        "description": "Regular serving of hot black coffee.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Black Coffee - Large",
+        "description": "Large serving of hot black coffee.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Milk Coffee - Regular",
+        "description": "Regular serving of hot milk coffee.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Milk Coffee - Large",
+        "description": "Large serving of hot milk coffee.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Cold Coffee",
+        "description": "Chilled coffee served cold.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Cold Coffee with Ice Cream",
+        "description": "Chilled coffee topped with ice cream.",
+        "discountApplied": 0,
+        "price": 100
+    },
+    {
+        "name": "Green Mint",
+        "description": "Cool mint beverage with a fresh green finish.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Mojito",
+        "description": "Refreshing chilled mojito-style drink.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Watermelon Juice",
+        "description": "Chilled watermelon beverage.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Ginger Lime",
+        "description": "Refreshing ginger and lime drink.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Blue Curacao",
+        "description": "Chilled blue curacao beverage.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "French Fries - Regular",
+        "description": "Regular serving of crispy French fries.",
+        "discountApplied": 0,
+        "price": 40
+    },
+    {
+        "name": "French Fries - Large",
+        "description": "Large serving of crispy French fries.",
+        "discountApplied": 0,
+        "price": 75
+    },
+    {
+        "name": "Fish & Chips - Half Portion",
+        "description": "Half portion of fish and chips.",
+        "discountApplied": 0,
+        "price": 120
+    },
+    {
+        "name": "Fish & Chips - Full Portion",
+        "description": "Full portion of fish and chips.",
+        "discountApplied": 0,
+        "price": 220
+    },
+    {
+        "name": "Chicken Pops - Regular",
+        "description": "Regular serving of crispy chicken pops.",
+        "discountApplied": 0,
+        "price": 60
+    },
+    {
+        "name": "Chicken Pops - Large",
+        "description": "Large serving of crispy chicken pops.",
+        "discountApplied": 0,
+        "price": 100
+    },
+    {
+        "name": "Chicken Nuggets - 5 pcs",
+        "description": "Five chicken nuggets.",
+        "discountApplied": 0,
+        "price": 70
+    },
+    {
+        "name": "Chicken Nuggets - 10 pcs",
+        "description": "Ten chicken nuggets.",
+        "discountApplied": 0,
+        "price": 130
+    },
+    {
+        "name": "Chicken Fingers - 5 pcs",
+        "description": "Five crispy chicken fingers.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Chicken Fingers - 10 pcs",
+        "description": "Ten crispy chicken fingers.",
+        "discountApplied": 0,
+        "price": 150
+    },
+    {
+        "name": "Fish Fingers - 3 pcs",
+        "description": "Three crispy fish fingers.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Fish Fingers - 6 pcs",
+        "description": "Six crispy fish fingers.",
+        "discountApplied": 0,
+        "price": 150
+    },
+    {
+        "name": "Veg Sandwich",
+        "description": "Sandwich filled with vegetables.",
+        "discountApplied": 0,
+        "price": 65
+    },
+    {
+        "name": "Corn Sandwich",
+        "description": "Sandwich filled with sweet corn.",
+        "discountApplied": 0,
+        "price": 75
+    },
+    {
+        "name": "Egg Sandwich",
+        "description": "Sandwich filled with egg.",
+        "discountApplied": 0,
+        "price": 75
+    },
+    {
+        "name": "Chicken Sandwich",
+        "description": "Sandwich filled with chicken.",
+        "discountApplied": 0,
+        "price": 90
+    },
+    {
+        "name": "Classic Pizza",
+        "description": "Classic pizza with tomato, onion, capsicum, corn, and paneer options available as add-ons.",
+        "discountApplied": 0,
+        "price": 65
+    },
+    {
+        "name": "Pizza Add-on - Tomato",
+        "description": "Tomato topping for pizza.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Pizza Add-on - Onion",
+        "description": "Onion topping for pizza.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Pizza Add-on - Capsicum",
+        "description": "Capsicum topping for pizza.",
+        "discountApplied": 0,
+        "price": 10
+    },
+    {
+        "name": "Pizza Add-on - Corn",
+        "description": "Sweet corn topping for pizza.",
+        "discountApplied": 0,
+        "price": 15
+    },
+    {
+        "name": "Pizza Add-on - Paneer",
+        "description": "Paneer topping for pizza.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Pizza Add-on - Mushroom",
+        "description": "Mushroom topping for pizza.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Pizza Add-on - Grilled Chicken",
+        "description": "Grilled chicken topping for pizza.",
+        "discountApplied": 0,
+        "price": 40
+    },
+    {
+        "name": "Pizza Add-on - Cheese",
+        "description": "Extra cheese topping for pizza.",
+        "discountApplied": 0,
+        "price": 35
+    },
+    {
+        "name": "Pizza Add-on - Chicken Sausage",
+        "description": "Chicken sausage topping for pizza.",
+        "discountApplied": 0,
+        "price": 30
+    },
+    {
+        "name": "Veg Pasta - Red Sauce",
+        "description": "Vegetable pasta tossed in red sauce.",
+        "discountApplied": 0,
+        "price": 70
+    },
+    {
+        "name": "Veg Pasta - White Sauce",
+        "description": "Vegetable pasta tossed in white sauce.",
+        "discountApplied": 0,
+        "price": 110
+    },
+    {
+        "name": "Veg Pasta - Mixed Sauce",
+        "description": "Vegetable pasta tossed in mixed sauce.",
+        "discountApplied": 0,
+        "price": 100
+    },
+    {
+        "name": "Chicken Pasta - Red Sauce",
+        "description": "Chicken pasta tossed in red sauce.",
+        "discountApplied": 0,
+        "price": 90
+    },
+    {
+        "name": "Chicken Pasta - White Sauce",
+        "description": "Chicken pasta tossed in white sauce.",
+        "discountApplied": 0,
+        "price": 130
+    },
+    {
+        "name": "Chicken Pasta - Mixed Sauce",
+        "description": "Chicken pasta tossed in mixed sauce.",
+        "discountApplied": 0,
+        "price": 120
+    },
+    {
+        "name": "Veg Chowmein",
+        "description": "Vegetable chowmein noodles.",
+        "discountApplied": 0,
+        "price": 70
+    },
+    {
+        "name": "Egg Chowmein",
+        "description": "Chowmein noodles tossed with egg.",
+        "discountApplied": 0,
+        "price": 80
+    },
+    {
+        "name": "Chicken Chowmein",
+        "description": "Chowmein noodles tossed with chicken.",
+        "discountApplied": 0,
+        "price": 110
+    },
+    {
+        "name": "Egg Chicken Chowmein",
+        "description": "Chowmein noodles tossed with egg and chicken.",
+        "discountApplied": 0,
+        "price": 120
+    },
+    {
+        "name": "Mixed Chowmein",
+        "description": "Mixed chowmein with assorted ingredients.",
+        "discountApplied": 0,
+        "price": 160
+    },
+    {
+        "name": "Veg Fried Rice",
+        "description": "Fried rice with vegetables.",
+        "discountApplied": 0,
+        "price": 90
+    },
+    {
+        "name": "Egg Fried Rice",
+        "description": "Fried rice tossed with egg.",
+        "discountApplied": 0,
+        "price": 100
+    },
+    {
+        "name": "Chicken Fried Rice",
+        "description": "Fried rice tossed with chicken.",
+        "discountApplied": 0,
+        "price": 130
+    },
+    {
+        "name": "Egg Chicken Fried Rice",
+        "description": "Fried rice tossed with egg and chicken.",
+        "discountApplied": 0,
+        "price": 140
+    },
+    {
+        "name": "Mixed Fried Rice",
+        "description": "Mixed fried rice with assorted ingredients.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Chinese Add-on - Gravy",
+        "description": "Gravy add-on for a compatible Chinese dish.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Chinese Add-on - Chilli Garlic",
+        "description": "Chilli garlic sauce add-on for a compatible Chinese dish.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Chinese Add-on - Schezwan",
+        "description": "Schezwan sauce add-on for a compatible Chinese dish.",
+        "discountApplied": 0,
+        "price": 20
+    },
+    {
+        "name": "Chilli Chicken",
+        "description": "Chicken prepared in chilli sauce.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Chicken Manchurian",
+        "description": "Chicken prepared Manchurian style.",
+        "discountApplied": 0,
+        "price": 190
+    },
+    {
+        "name": "Schezwan Chicken",
+        "description": "Chicken prepared in Schezwan sauce.",
+        "discountApplied": 0,
+        "price": 190
+    },
+    {
+        "name": "Butter Garlic Chicken",
+        "description": "Chicken tossed in butter garlic sauce.",
+        "discountApplied": 0,
+        "price": 200
+    },
+    {
+        "name": "Chilli Fish (6 pcs)",
+        "description": "Six pieces of fish prepared in chilli sauce.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Fish Manchurian (6 pcs)",
+        "description": "Six pieces of fish prepared Manchurian style.",
+        "discountApplied": 0,
+        "price": 190
+    },
+    {
+        "name": "Schezwan Fish (6 pcs)",
+        "description": "Six pieces of fish prepared in Schezwan sauce.",
+        "discountApplied": 0,
+        "price": 190
+    },
+    {
+        "name": "Butter Garlic Fish (6 pcs)",
+        "description": "Six pieces of fish tossed in butter garlic sauce.",
+        "discountApplied": 0,
+        "price": 200
+    },
+    {
+        "name": "Chilli Prawn (6 pcs)",
+        "description": "Six pieces of prawn prepared in chilli sauce.",
+        "discountApplied": 0,
+        "price": 250
+    },
+    {
+        "name": "Prawn Manchurian (6 pcs)",
+        "description": "Six pieces of prawn prepared Manchurian style.",
+        "discountApplied": 0,
+        "price": 260
+    },
+    {
+        "name": "Schezwan Prawn (6 pcs)",
+        "description": "Six pieces of prawn prepared in Schezwan sauce.",
+        "discountApplied": 0,
+        "price": 260
+    },
+    {
+        "name": "Butter Garlic Prawn (6 pcs)",
+        "description": "Six pieces of prawn tossed in butter garlic sauce.",
+        "discountApplied": 0,
+        "price": 270
+    },
+    {
+        "name": "Chilli Paneer",
+        "description": "Paneer prepared in chilli sauce.",
+        "discountApplied": 0,
+        "price": 170
+    },
+    {
+        "name": "Paneer Manchurian",
+        "description": "Paneer prepared Manchurian style.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Schezwan Paneer",
+        "description": "Paneer prepared in Schezwan sauce.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Butter Garlic Paneer",
+        "description": "Paneer tossed in butter garlic sauce.",
+        "discountApplied": 0,
+        "price": 190
+    },
+    {
+        "name": "Crispy Chicken",
+        "description": "Crispy chicken starter.",
+        "discountApplied": 0,
+        "price": 200
+    },
+    {
+        "name": "Crispy Baby Corn",
+        "description": "Crispy baby corn starter.",
+        "discountApplied": 0,
+        "price": 160
+    },
+    {
+        "name": "Crispy Mushroom",
+        "description": "Crispy mushroom starter.",
+        "discountApplied": 0,
+        "price": 200
+    },
+    {
+        "name": "Chilli Honey Chicken",
+        "description": "Chicken tossed in chilli honey sauce.",
+        "discountApplied": 0,
+        "price": 220
+    },
+    {
+        "name": "Chilli Honey Baby Corn",
+        "description": "Baby corn tossed in chilli honey sauce.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Chilli Honey Mushroom",
+        "description": "Mushroom tossed in chilli honey sauce.",
+        "discountApplied": 0,
+        "price": 220
+    },
+    {
+        "name": "Butter Garlic Pepper Dry Chicken",
+        "description": "Dry chicken starter with butter, garlic, and pepper.",
+        "discountApplied": 0,
+        "price": 220
+    },
+    {
+        "name": "Butter Garlic Pepper Dry Baby Corn",
+        "description": "Dry baby corn starter with butter, garlic, and pepper.",
+        "discountApplied": 0,
+        "price": 180
+    },
+    {
+        "name": "Butter Garlic Pepper Dry Mushroom",
+        "description": "Dry mushroom starter with butter, garlic, and pepper.",
+        "discountApplied": 0,
+        "price": 220
+    }
+]

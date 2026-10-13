@@ -5,6 +5,7 @@ import {
     apiBaseUrl,
     currencyFormatter,
     formatDateTime,
+    getDateInputValue,
     getPaymentMethodLabel,
     getRefundTypeLabel,
     isBillRefund,
@@ -20,17 +21,6 @@ type RefundMessage = {
 }
 
 type HistoryStatusFilter = 'ALL' | 'PAID' | RefundType
-
-function getLocalDateInput(dateTime: string) {
-    const date = new Date(dateTime)
-    if (Number.isNaN(date.getTime())) return null
-
-    return [
-        date.getFullYear(),
-        String(date.getMonth() + 1).padStart(2, '0'),
-        String(date.getDate()).padStart(2, '0'),
-    ].join('-')
-}
 
 function HistoryManager({ mode }: { mode: UserMode }) {
     const [paidOrders, setPaidOrders] = useState<PaidOrder[]>([])
@@ -51,7 +41,7 @@ function HistoryManager({ mode }: { mode: UserMode }) {
     const seatingOptions = [...new Set(paidOrders.map((paidOrder) => paidOrder.tableName))]
         .sort((firstSeating, secondSeating) => firstSeating.localeCompare(secondSeating))
     const filteredPaidOrders = paidOrders.filter((paidOrder) => {
-        const paidDate = getLocalDateInput(paidOrder.paidAt)
+        const paidDate = getDateInputValue(paidOrder.paidAt)
         if (fromDate && (paidDate === null || paidDate < fromDate)) return false
         if (toDate && (paidDate === null || paidDate > toDate)) return false
         if (seatingFilter !== 'ALL' && paidOrder.tableName !== seatingFilter) return false

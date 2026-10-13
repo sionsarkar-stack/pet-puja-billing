@@ -3,7 +3,10 @@ import { useEffect, useState } from 'react'
 import {
     apiBaseUrl,
     currencyFormatter,
+    formatDateOnly,
     formatDateTime,
+    getDateInputBoundary,
+    getDateInputValue,
     getPaymentMethodLabel,
     getRefundTypeLabel,
     isBalanceSheet,
@@ -35,14 +38,12 @@ type RefundEntry = {
 }
 
 function dateInputToDate(value: string, endOfDay = false) {
-    const [year, month, day] = value.split('-').map(Number)
-    return new Date(year, month - 1, day, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0)
+    return getDateInputBoundary(value, endOfDay) ?? new Date(Number.NaN)
 }
 
 function getCurrentDateEnd() {
-    const currentDate = new Date()
-    currentDate.setHours(23, 59, 59, 999)
-    return currentDate
+    const currentDate = getDateInputValue(new Date())
+    return currentDate === null ? new Date(Number.NaN) : dateInputToDate(currentDate, true)
 }
 
 function getRestaurantFileName(restaurantName: string) {
@@ -54,7 +55,7 @@ function getRestaurantFileName(restaurantName: string) {
 }
 
 function formatDateInput(value: string) {
-    return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(dateInputToDate(value))
+    return formatDateOnly(value)
 }
 
 function getExportDateRange(fromDate: string, toDate: string): ExportDateRange {

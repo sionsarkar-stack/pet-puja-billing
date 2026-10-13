@@ -6,11 +6,12 @@ import BackupManager from './BackupManager'
 import DailyClosingManager from './DailyClosingManager'
 import ExpensesManager from './ExpensesManager'
 import HistoryManager from './HistoryManager'
-import MenuManager from './MenuManager'
+import DetailsManager from './DetailsManager'
+import ProfitFactManager from './ProfitFactManager'
 import TableManager from './TableManager'
 import { useStackedTables } from './stackedTables'
 import { Watermark } from './Watermark'
-import { apiBaseUrl } from './financial'
+import { apiBaseUrl, isBusinessDayStatus, type BusinessDayStatus } from './financial'
 
 type WorkspaceProps = {
     isLoggingOut: boolean
@@ -19,21 +20,28 @@ type WorkspaceProps = {
     username: string
 }
 
-type WorkspaceTab = 'table' | 'menu' | 'history' | 'expenses' | 'daily-close' | 'balance-sheet' | 'backup'
+type WorkspaceTab = 'table' | 'menu' | 'history' | 'expenses' | 'daily-close' | 'balance-sheet' | 'profit-fact' | 'backup'
 
 const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: 'table', label: 'Table' },
-    { id: 'menu', label: 'Menu' },
+    { id: 'menu', label: 'Details' },
     { id: 'history', label: 'History' },
     { id: 'expenses', label: 'Expenses' },
     { id: 'daily-close', label: 'Daily close' },
     { id: 'balance-sheet', label: 'Balance sheet' },
+    { id: 'profit-fact', label: 'Profit Fact' },
     { id: 'backup', label: 'Backup' },
 ]
 
 function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
     const { restaurantName } = useRestaurantConfiguration()
-    const [activeTab, setActiveTab] = useState<WorkspaceTab>('table')
+    const [activeTab, setActiveTab] = useState<WorkspaceTab>(() => mode === 'ADMIN' ? 'daily-close' : 'menu')
+    const [businessDayStatus, setBusinessDayStatus] = useState<BusinessDayStatus>({
+        active: false,
+        startedAt: null,
+        businessDate: null,
+    })
+    const [businessDayStatusLoaded, setBusinessDayStatusLoaded] = useState(false)
     const [hasOpenedTable, setHasOpenedTable] = useState(true)
     const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
     const shellRef = useRef<HTMLDivElement>(null)
@@ -43,6 +51,54 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         document.getElementById(`tab-${activeTab}`)?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
     }, [activeTab])
     const [backupAvailable, setBackupAvailable] = useState(true)
+
+    useEffect(() => {
+        let isMounted = true
+        let hasLoadedInitialStatus = false
+        let activeController: AbortController | null = null
+        async function loadBusinessDayStatus() {
+            activeController?.abort()
+            const controller = new AbortController()
+            activeController = controller
+            try {
+                const response = await fetch(`${apiBaseUrl}/api/daily-closings/status`, {
+                    credentials: 'include',
+                    signal: controller.signal,
+                })
+                if (!response.ok) throw new Error('Business day status load failed')
+                const status: unknown = await response.json()
+                if (!isBusinessDayStatus(status)) throw new Error('Business day status has an unexpected shape')
+
+                if (isMounted) {
+                    const isInitialStatus = !hasLoadedInitialStatus
+                    hasLoadedInitialStatus = true
+                    setBusinessDayStatus(status)
+                    setActiveTab((currentTab) => status.active && isInitialStatus
+                        ? 'table'
+                        : !status.active && currentTab === 'table'
+                            ? mode === 'ADMIN' ? 'daily-close' : 'menu'
+                            : currentTab)
+                }
+            } catch {
+                if (isMounted && !controller.signal.aborted) {
+                    setBusinessDayStatus({ active: false, startedAt: null, businessDate: null })
+                    setActiveTab((currentTab) => currentTab === 'table'
+                        ? mode === 'ADMIN' ? 'daily-close' : 'menu'
+                        : currentTab)
+                }
+            } finally {
+                if (isMounted && !controller.signal.aborted) setBusinessDayStatusLoaded(true)
+            }
+        }
+
+        void loadBusinessDayStatus()
+        const intervalId = window.setInterval(() => void loadBusinessDayStatus(), 15_000)
+        return () => {
+            isMounted = false
+            window.clearInterval(intervalId)
+            activeController?.abort()
+        }
+    }, [mode])
 
     useEffect(() => {
         if (mode !== 'ADMIN') return
@@ -60,7 +116,12 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         ? tabs.filter((tab) => tab.id !== 'backup' || backupAvailable)
         : tabs.filter((tab) => tab.id === 'table' || tab.id === 'menu' || tab.id === 'history')
 
+    function isTabDisabled(tab: WorkspaceTab) {
+        return tab === 'table' && (!businessDayStatusLoaded || !businessDayStatus.active)
+    }
+
     function selectTab(tab: WorkspaceTab) {
+        if (isTabDisabled(tab)) return
         setActiveTab(tab)
         if (tab === 'table') {
             setHasOpenedTable(true)
@@ -71,15 +132,27 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
 
         event.preventDefault()
-        const nextTabIndex = event.key === 'Home'
+        const enabledTabs = visibleTabs
+            .map((tab, index) => ({ tab, index }))
+            .filter(({ tab }) => !isTabDisabled(tab.id))
+        const currentEnabledIndex = enabledTabs.findIndex(({ index }) => index === tabIndex)
+        if (currentEnabledIndex < 0 || enabledTabs.length === 0) return
+
+        const nextEnabledIndex = event.key === 'Home'
             ? 0
             : event.key === 'End'
-                ? visibleTabs.length - 1
-                : (tabIndex + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length
-        const nextTab = visibleTabs[nextTabIndex]
+                ? enabledTabs.length - 1
+                : (currentEnabledIndex + (event.key === 'ArrowRight' ? 1 : -1) + enabledTabs.length) % enabledTabs.length
+        const nextTab = enabledTabs[nextEnabledIndex]
 
-        selectTab(nextTab.id)
-        tabButtonRefs.current[nextTabIndex]?.focus()
+        selectTab(nextTab.tab.id)
+        tabButtonRefs.current[nextTab.index]?.focus()
+    }
+
+    function handleBusinessDayStatusChange(status: BusinessDayStatus) {
+        setBusinessDayStatus(status)
+        setBusinessDayStatusLoaded(true)
+        setActiveTab(status.active ? 'table' : mode === 'ADMIN' ? 'daily-close' : 'menu')
     }
 
     return (
@@ -111,6 +184,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                         <button
                             aria-controls={`panel-${tab.id}`}
                             aria-selected={activeTab === tab.id}
+                            disabled={isTabDisabled(tab.id)}
                             id={`tab-${tab.id}`}
                             key={tab.id}
                             onClick={() => selectTab(tab.id)}
@@ -120,6 +194,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                             }}
                             role="tab"
                             tabIndex={activeTab === tab.id ? 0 : -1}
+                            title={isTabDisabled(tab.id) ? 'Start a business day before opening tables' : undefined}
                             type="button"
                         >
                             {tab.label}
@@ -134,7 +209,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                         id="panel-menu"
                         role="tabpanel"
                     >
-                        <MenuManager canManage={mode === 'ADMIN'} />
+                        <DetailsManager mode={mode} />
                     </section>
                 )}
 
@@ -183,6 +258,17 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                     </section>
                 )}
 
+                {activeTab === 'profit-fact' && (
+                    <section
+                        aria-labelledby="tab-profit-fact"
+                        className="workspace-content"
+                        id="panel-profit-fact"
+                        role="tabpanel"
+                    >
+                        <ProfitFactManager />
+                    </section>
+                )}
+
                 {activeTab === 'daily-close' && (
                     <section
                         aria-labelledby="tab-daily-close"
@@ -190,7 +276,10 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                         id="panel-daily-close"
                         role="tabpanel"
                     >
-                        <DailyClosingManager />
+                        <DailyClosingManager
+                            businessDayStatus={businessDayStatus}
+                            onBusinessDayStatusChange={handleBusinessDayStatusChange}
+                        />
                     </section>
                 )}
 

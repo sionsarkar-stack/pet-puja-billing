@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface MenuItemRepository extends JpaRepository<MenuItem, Long> {
 
     List<MenuItem> findAllByOrderByNameAsc();
+
+    List<MenuItem> findAllByAvailableTrueOrderBySectionAscSubsectionAscNameAsc();
 }
