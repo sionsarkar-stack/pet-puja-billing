@@ -1,22 +1,28 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react'
-import { jsPDF } from 'jspdf'
+import { Fragment, type FormEvent, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import ConfirmationDialog from './ConfirmationDialog'
 import { createOrderDocument } from './orderDocument'
+import { groupOrderLines } from './orderSections'
 import { groupMenuItems } from './menuSections'
 import { useRestaurantConfiguration } from './RestaurantConfiguration'
 import { createUpiPaymentUri } from './upiPayment'
 import {
     apiBaseUrl,
     currencyFormatter,
+    formatCustomerName,
     formatDateTime,
     formatTime,
     getPaymentMethodLabel,
+    getTableDisplayName,
+    parsePaymentAmountInPaise,
+    isCustomerDetails,
+    isCustomerDetailsList,
     isOpenOrder,
     isOpenOrders,
     isPaidOrder,
     type OpenOrder,
     type PaidOrder,
+    type CustomerDetails,
     type PaymentMethod,
 } from './financial'
 
@@ -40,13 +46,22 @@ type MenuAddOn = {
 type OrderLine = {
     menuItemId: number
     name: string
+    section: string
     quantity: number
     unitPrice: number
     addOns: MenuAddOn[]
 }
 
+const EMPTY_ORDER_LINES: OrderLine[] = []
+
 type OpenOrderState = {
+    tableLabel: string | null
+    orderDescription: string | null
+    committeeDiscountPercent: number | null
     completed: boolean
+    customerName: string | null
+    customerPhone: string | null
+    customerDateOfBirth: string | null
     lines: OrderLine[]
     subtotal?: number
     discountPercent?: number
@@ -60,13 +75,27 @@ type TableMessage = {
 }
 
 type OrderSaveIntent = {
+    tableLabel?: string
+    orderDescription?: string
+    committeeDiscountPercent?: number
     completed: boolean
+    customerName: string | null
+    customerPhone: string | null
+    customerDateOfBirth: string | null
     orderLines: OrderLine[]
     resetInvoice?: boolean
-    resetOrderDraft?: boolean
     seatingId: string
     successMessage: string
     tableName: string
+}
+
+type CustomerDetailsForSave = {
+    tableLabel?: string
+    orderDescription?: string
+    committeeDiscountPercent?: number
+    customerName: string | null
+    customerPhone: string | null
+    customerDateOfBirth: string | null
 }
 
 type OrderSaveStatus = {
@@ -76,9 +105,26 @@ type OrderSaveStatus = {
 
 type SeatingSpot = {
     id: string
-    kind: 'table' | 'outdoor'
+    kind: 'table' | 'outdoor' | 'committee'
     name: string
     number: number
+    member?: CommitteeMember
+}
+
+type CommitteeMember = {
+    id: number
+    name: string
+    protectedMember: boolean
+    fixedDiscountPercent: number | null
+}
+
+function isCommitteeMember(value: unknown): value is CommitteeMember {
+    return typeof value === 'object' && value !== null
+        && 'id' in value && typeof value.id === 'number'
+        && 'name' in value && typeof value.name === 'string'
+        && 'protectedMember' in value && typeof value.protectedMember === 'boolean'
+        && 'fixedDiscountPercent' in value && (value.fixedDiscountPercent === null
+            || (typeof value.fixedDiscountPercent === 'number' && value.fixedDiscountPercent >= 0 && value.fixedDiscountPercent <= 100))
 }
 
 type SeatingStatus = {
@@ -98,6 +144,9 @@ function createSeatingSpots(kind: SeatingSpot['kind'], label: string, count: num
 }
 
 function getSeatingSpotFromName(name: string): SeatingSpot | null {
+    if (name.startsWith('Committee ') && name.length > 'Committee '.length) {
+        return { id: `committee-${name.slice('Committee '.length).toLowerCase()}`, kind: 'committee', name, number: 0 }
+    }
     const match = /^(Table|Outdoor) ([1-9]\d*)$/.exec(name)
     if (match === null) return null
 
@@ -168,6 +217,10 @@ function getOrderTotal(orderLines: OrderLine[]) {
     return roundCurrency(orderLines.reduce((total, orderLine) => total + getLineTotal(orderLine), 0))
 }
 
+function getOrderLineGroupTotal(orderLines: OrderLine[]) {
+    return roundCurrency(orderLines.reduce((total, orderLine) => total + getLineTotal(orderLine), 0))
+}
+
 function getSeatingStatus(order: OpenOrderState | undefined): SeatingStatus {
     if (order === undefined) {
         return { detail: 'Start an order', label: 'Available', tone: 'available' }
@@ -187,6 +240,7 @@ function toOrderLines(openOrder: OpenOrder): OrderLine[] {
     return openOrder.lines.map((line) => ({
         menuItemId: line.menuItemId,
         name: line.itemName,
+        section: line.section ?? 'Other',
         quantity: line.quantity,
         unitPrice: line.unitPrice,
         addOns: line.addOns ?? [],
@@ -195,7 +249,13 @@ function toOrderLines(openOrder: OpenOrder): OrderLine[] {
 
 function toOpenOrderState(openOrder: OpenOrder): OpenOrderState {
     return {
+        tableLabel: openOrder.tableLabel ?? null,
+        orderDescription: openOrder.orderDescription ?? null,
+        committeeDiscountPercent: openOrder.committeeDiscountPercent ?? null,
         completed: openOrder.completed,
+        customerName: openOrder.customerName ?? null,
+        customerPhone: openOrder.customerPhone ?? null,
+        customerDateOfBirth: openOrder.customerDateOfBirth ?? null,
         lines: toOrderLines(openOrder),
         subtotal: openOrder.subtotal,
         discountPercent: openOrder.discountPercent,
@@ -206,6 +266,19 @@ function toOpenOrderState(openOrder: OpenOrder): OpenOrderState {
 
 function getInvoiceFileName(seatingName: string) {
     return `${seatingName.toLowerCase().replaceAll(' ', '-')}-invoice.pdf`
+}
+
+function normalizeCustomerPhoneNumber(value: string) {
+    let digits = value.replace(/\D/g, '')
+    if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1)
+    if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) digits = `91${digits}`
+    if (!/^91[6-9]\d{9}$/.test(digits)) return null
+
+    return `+${digits}`
+}
+
+function isFutureDateOfBirth(value: string) {
+    return value > new Date().toISOString().slice(0, 10)
 }
 
 function getReceiptFileName(billNumber: string) {
@@ -233,29 +306,74 @@ function getInvoiceReference(createdAt: Date, seatingName: string) {
 
 type TableManagerProps = {
     isActive?: boolean
+    canManageCommitteeMembers?: boolean
 }
 
-function TableManager({ isActive = true }: TableManagerProps) {
-    const { restaurantName, upiVpa } = useRestaurantConfiguration()
+function mergeOrderLines(existingLines: OrderLine[], additions: OrderLine[]) {
+    const lines = [...existingLines]
+    for (const addition of additions) {
+        const index = lines.findIndex((line) => getOrderLineKey(line) === getOrderLineKey(addition))
+        if (index === -1) lines.push(addition)
+        else lines[index] = { ...lines[index], quantity: lines[index].quantity + addition.quantity }
+    }
+    return lines
+}
+
+function TableManager({ isActive = true, canManageCommitteeMembers = true }: TableManagerProps) {
+    const { restaurantName, upiVpa, secondaryUpiVpa = '' } = useRestaurantConfiguration()
     const paidReceiptFrameRef = useRef<HTMLIFrameElement>(null)
+    const selectedOrderPanelRef = useRef<HTMLDivElement>(null)
     const [menuItems, setMenuItems] = useState<MenuItem[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [tableCount, setTableCount] = useState(initialTableCount)
     const [outdoorCount, setOutdoorCount] = useState(initialOutdoorCount)
     const [selectedSeatingId, setSelectedSeatingId] = useState<string | null>(null)
-    const [selectedMenuItemId, setSelectedMenuItemId] = useState('')
-    const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([])
-    const [quantity, setQuantity] = useState('1')
+    const [menuSearch, setMenuSearch] = useState('')
+    const [isMenuPickerOpen, setIsMenuPickerOpen] = useState(false)
+    const [activeMenuItemId, setActiveMenuItemId] = useState<number | null>(null)
+    const [expandedAddOnMenuItemId, setExpandedAddOnMenuItemId] = useState<number | null>(null)
+    const [menuItemToRevealAddOns, setMenuItemToRevealAddOns] = useState<number | null>(null)
+    const menuPickerRef = useRef<HTMLDivElement>(null)
+    const [customerNameDraftsBySeating, setCustomerNameDraftsBySeating] = useState<Partial<Record<string, string>>>({})
+    const [orderDescriptionDraftsBySeating, setOrderDescriptionDraftsBySeating] = useState<Partial<Record<string, string>>>({})
+    const [tableLabelDraftsBySeating, setTableLabelDraftsBySeating] = useState<Partial<Record<string, string>>>({})
+    const [committeeDiscountDrafts, setCommitteeDiscountDrafts] = useState<Partial<Record<string, string>>>({})
+    const [committeeMembers, setCommitteeMembers] = useState<CommitteeMember[]>([])
+    const [newCommitteeName, setNewCommitteeName] = useState('')
+    const [isSavingCommitteeMember, setIsSavingCommitteeMember] = useState(false)
+    const [committeeMemberPendingDeletion, setCommitteeMemberPendingDeletion] = useState<CommitteeMember | null>(null)
+    const [committeeMessage, setCommitteeMessage] = useState<TableMessage | null>(null)
+    const [customerPhoneDraftsBySeating, setCustomerPhoneDraftsBySeating] = useState<Partial<Record<string, string>>>({})
+    const [customerDateOfBirthDraftsBySeating, setCustomerDateOfBirthDraftsBySeating] = useState<Partial<Record<string, string>>>({})
+    const [addNameEnabledBySeating, setAddNameEnabledBySeating] = useState<Partial<Record<string, boolean>>>({})
+    const [addPhoneEnabledBySeating, setAddPhoneEnabledBySeating] = useState<Partial<Record<string, boolean>>>({})
+    const [addDateOfBirthEnabledBySeating, setAddDateOfBirthEnabledBySeating] = useState<Partial<Record<string, boolean>>>({})
+    const [customerSearchQuery, setCustomerSearchQuery] = useState('')
+    const [customerSearchMatches, setCustomerSearchMatches] = useState<CustomerDetails[]>([])
+    const [customerSearchMessage, setCustomerSearchMessage] = useState<string | null>(null)
+    const [customerSearchStatus, setCustomerSearchStatus] = useState<'idle' | 'found' | 'multiple' | 'not-found'>('idle')
+    const [isSearchingCustomer, setIsSearchingCustomer] = useState(false)
+    const [isCreateContactOpen, setIsCreateContactOpen] = useState(false)
+    const [newContactName, setNewContactName] = useState('')
+    const [newContactPhone, setNewContactPhone] = useState('')
+    const [newContactDateOfBirth, setNewContactDateOfBirth] = useState('')
+    const [isSavingNewContact, setIsSavingNewContact] = useState(false)
     const [ordersBySeating, setOrdersBySeating] = useState<Partial<Record<string, OpenOrderState>>>({})
     const [isOrderSaving, setIsOrderSaving] = useState(false)
     const [failedOrderSave, setFailedOrderSave] = useState<OrderSaveIntent | null>(null)
     const [lastOrderSave, setLastOrderSave] = useState<OrderSaveStatus | null>(null)
     const [paymentMethodInProgress, setPaymentMethodInProgress] = useState<PaymentMethod | null>(null)
     const [pendingPaymentMethod, setPendingPaymentMethod] = useState<PaymentMethod | null>(null)
+    const [isSplitPayment, setIsSplitPayment] = useState(false)
+    const [splitCashAmount, setSplitCashAmount] = useState('')
+    const [splitOnlineAmount, setSplitOnlineAmount] = useState('')
     const [upiQrSeatingId, setUpiQrSeatingId] = useState<string | null>(null)
+    const [upiQrProvider, setUpiQrProvider] = useState<'primary' | 'secondary'>('primary')
     const [lastPaidSeatingId, setLastPaidSeatingId] = useState<string | null>(null)
     const [lastPaidOrder, setLastPaidOrder] = useState<PaidOrder | null>(null)
     const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null)
+    const [invoiceReference, setInvoiceReference] = useState<string | null>(null)
+    const [invoiceWhatsAppPhone, setInvoiceWhatsAppPhone] = useState('')
     const [paidReceiptUrl, setPaidReceiptUrl] = useState<string | null>(null)
     const [isPaidReceiptReadyToPrint, setIsPaidReceiptReadyToPrint] = useState(false)
     const [message, setMessage] = useState<TableMessage | null>(null)
@@ -300,7 +418,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                         restoredOrders[seatingSpot.id] = toOpenOrderState(openOrder)
                         if (seatingSpot.kind === 'table') {
                             restoredTableCount = Math.max(restoredTableCount, seatingSpot.number)
-                        } else {
+                        } else if (seatingSpot.kind === 'outdoor') {
                             restoredOutdoorCount = Math.max(restoredOutdoorCount, seatingSpot.number)
                         }
                     }
@@ -310,8 +428,18 @@ function TableManager({ isActive = true }: TableManagerProps) {
                     setOutdoorCount((currentCount) => Math.max(currentCount, restoredOutdoorCount))
                 })
 
-            const [menuResult, openOrdersResult] = await Promise.allSettled([menuLoad, openOrdersLoad])
+            const membersLoad = fetch(`${apiBaseUrl}/api/committee-members`, { credentials: 'include', signal: controller.signal })
+                .then(async (response) => {
+                    if (!response.ok) throw new Error('Committee members could not be loaded')
+                    const members: unknown = await response.json()
+                    if (!Array.isArray(members) || !members.every(isCommitteeMember)) throw new Error('Unexpected committee members')
+                    setCommitteeMembers(members)
+                })
+            const [menuResult, openOrdersResult, membersResult] = await Promise.allSettled([menuLoad, openOrdersLoad, membersLoad])
             if (controller.signal.aborted) return
+            if (membersResult.status === 'rejected') {
+                setCommitteeMessage({ tone: 'error', text: 'We could not load Committee members. Please try again.' })
+            }
 
             if (menuResult.status === 'rejected') {
                 setMessage({ tone: 'error', text: 'We could not load the menu. Please try again.' })
@@ -344,16 +472,78 @@ function TableManager({ isActive = true }: TableManagerProps) {
         return () => URL.revokeObjectURL(paidReceiptUrl)
     }, [paidReceiptUrl])
 
+    useEffect(() => {
+        if (selectedSeatingId?.startsWith('committee-')) {
+            selectedOrderPanelRef.current?.scrollIntoView?.({ block: 'start' })
+        }
+    }, [selectedSeatingId])
+
     const tableSpots = createSeatingSpots('table', 'Table', tableCount)
     const outdoorSpots = createSeatingSpots('outdoor', 'Outdoor', outdoorCount)
-    const selectedSeating = [...tableSpots, ...outdoorSpots].find((spot) => spot.id === selectedSeatingId) ?? null
-    const selectedMenuItem = menuItems.find((menuItem) => String(menuItem.id) === selectedMenuItemId)
-    const selectedAddOns = selectedMenuItem?.addOns.filter((addOn) => selectedAddOnIds.includes(addOn.id)) ?? []
-    const parsedQuantity = Number(quantity)
-    const hasValidQuantity = Number.isInteger(parsedQuantity) && parsedQuantity >= 1
+    const committeeSpots: SeatingSpot[] = committeeMembers.map((member, index) => ({
+        id: `committee-${member.name.toLowerCase()}`, kind: 'committee', name: `Committee ${member.name}`, number: index + 1, member,
+    }))
+    const selectedSeating = [...tableSpots, ...outdoorSpots, ...committeeSpots].find((spot) => spot.id === selectedSeatingId) ?? null
     const selectedOpenOrder = selectedSeating === null ? null : ordersBySeating[selectedSeating.id] ?? null
-    const selectedOrderLines = selectedOpenOrder?.lines ?? []
+    const tableLabel = selectedSeating === null ? '' : tableLabelDraftsBySeating[selectedSeating.id] ?? selectedOpenOrder?.tableLabel ?? ''
+    const orderDescription = selectedSeating === null ? '' : orderDescriptionDraftsBySeating[selectedSeating.id] ?? selectedOpenOrder?.orderDescription ?? ''
+    const orderDescriptionForSave = orderDescription.trim()
+    const savedOrderDescription = selectedOpenOrder?.orderDescription?.trim() ?? ''
+    const isOrderDescriptionDirty = orderDescriptionForSave !== savedOrderDescription
+    const tableLabelForSave = tableLabel.trim()
+    const savedTableLabel = selectedOpenOrder?.tableLabel?.trim() ?? ''
+    const isTableLabelDirty = tableLabelForSave !== savedTableLabel
+    const selectedSeatingName = getTableDisplayName({ tableName: selectedSeating?.name ?? '', tableLabel: tableLabelForSave })
+    const isCommitteeOrder = selectedSeating?.kind === 'committee'
+    const fixedCommitteeDiscount = selectedSeating?.member?.fixedDiscountPercent ?? null
+    const committeeDiscount = fixedCommitteeDiscount !== null ? String(fixedCommitteeDiscount)
+        : selectedSeating === null ? '' : committeeDiscountDrafts[selectedSeating.id] ?? String(selectedOpenOrder?.committeeDiscountPercent ?? 0)
+    const committeeDiscountValue = Number(committeeDiscount)
+    const isValidCommitteeDiscount = /^\d{1,3}(?:\.\d{1,2})?$/.test(committeeDiscount)
+        && committeeDiscountValue >= 0 && committeeDiscountValue <= 100
+    const isCommitteeDiscountDirty = isCommitteeOrder && (!isValidCommitteeDiscount
+        || committeeDiscountValue !== (selectedOpenOrder?.committeeDiscountPercent ?? 0))
+    const customerName = selectedSeating === null
+        ? ''
+        : customerNameDraftsBySeating[selectedSeating.id] ?? selectedOpenOrder?.customerName ?? ''
+    const customerPhone = selectedSeating === null
+        ? ''
+        : customerPhoneDraftsBySeating[selectedSeating.id] ?? selectedOpenOrder?.customerPhone ?? ''
+    const customerDateOfBirth = selectedSeating === null
+        ? ''
+        : customerDateOfBirthDraftsBySeating[selectedSeating.id] ?? selectedOpenOrder?.customerDateOfBirth ?? ''
+    const isAddNameEnabled = selectedSeating !== null
+        ? addNameEnabledBySeating[selectedSeating.id] ?? Boolean(selectedOpenOrder?.customerName?.trim())
+        : false
+    const isAddPhoneEnabled = selectedSeating !== null
+        ? addPhoneEnabledBySeating[selectedSeating.id] ?? Boolean(selectedOpenOrder?.customerPhone)
+        : false
+    const isAddDateOfBirthEnabled = selectedSeating !== null
+        ? addDateOfBirthEnabledBySeating[selectedSeating.id] ?? Boolean(selectedOpenOrder?.customerDateOfBirth)
+        : false
+    const selectedOrderLines = selectedOpenOrder?.lines ?? EMPTY_ORDER_LINES
+    const orderLineGroups = isCommitteeOrder ? [{ section: 'Committee', lines: selectedOrderLines }] : groupOrderLines(selectedOrderLines)
+    const generalSubtotal = getOrderLineGroupTotal(
+        orderLineGroups.find((group) => group.section === 'General')?.lines ?? [],
+    )
+    const othersSubtotal = getOrderLineGroupTotal(
+        orderLineGroups.find((group) => group.section === 'Others')?.lines ?? [],
+    )
     const isOrderCompleted = selectedOpenOrder?.completed ?? false
+    const customerNameForSave = isAddNameEnabled ? customerName.trim() || null : null
+    const customerPhoneForSave = isAddPhoneEnabled ? normalizeCustomerPhoneNumber(customerPhone) : null
+    const customerDateOfBirthForSave = isAddDateOfBirthEnabled ? customerDateOfBirth || null : null
+    const savedCustomerName = selectedOpenOrder?.customerName?.trim() || null
+    const isCustomerDetailsDirty = isTableLabelDirty || isCommitteeDiscountDirty || customerNameForSave !== savedCustomerName
+        || customerPhoneForSave !== (selectedOpenOrder?.customerPhone ?? null)
+        || customerDateOfBirthForSave !== (selectedOpenOrder?.customerDateOfBirth ?? null)
+    const isOrderDetailsDirty = isCustomerDetailsDirty || isOrderDescriptionDirty
+    const hasInvalidCustomerName = isAddNameEnabled && customerName.trim() === ''
+    const hasInvalidCustomerPhone = isAddPhoneEnabled && customerPhoneForSave === null
+    const hasInvalidCustomerDateOfBirth = isAddDateOfBirthEnabled && customerDateOfBirth === ''
+    const hasInvalidCustomerDetails = hasInvalidCustomerName
+        || hasInvalidCustomerPhone
+        || hasInvalidCustomerDateOfBirth
     const hasJustPaid = selectedSeating !== null && lastPaidSeatingId === selectedSeating.id
     const hasFailedOrderSave = selectedSeating !== null && failedOrderSave?.seatingId === selectedSeating.id
     const hasRecentOrderSave = selectedSeating !== null && lastOrderSave?.seatingId === selectedSeating.id
@@ -361,11 +551,22 @@ function TableManager({ isActive = true }: TableManagerProps) {
     const selectedDiscountPercent = selectedOpenOrder?.discountPercent ?? 0
     const selectedDiscountAmount = selectedOpenOrder?.discountAmount ?? 0
     const selectedOrderTotal = selectedOpenOrder?.total ?? roundCurrency(selectedOrderSubtotal - selectedDiscountAmount)
-    const draftLineTotal = selectedMenuItem && hasValidQuantity
-        ? roundCurrency(getUnitPrice(selectedMenuItem, selectedAddOns) * parsedQuantity)
-        : null
-    const isOrderActionInProgress = isOrderSaving || paymentMethodInProgress !== null || pendingPaymentMethod !== null
-    const groupedMenuItems = groupMenuItems(menuItems).flatMap(({ section, items, subsections }) => [
+    const splitCashPaise = parsePaymentAmountInPaise(splitCashAmount)
+    const splitOnlinePaise = parsePaymentAmountInPaise(splitOnlineAmount)
+    const isValidSplit = splitCashPaise !== null && splitOnlinePaise !== null
+        && splitCashPaise > 0 && splitOnlinePaise > 0
+        && splitCashPaise + splitOnlinePaise === Math.round(selectedOrderTotal * 100)
+    const qrPaymentAmount = isSplitPayment ? (splitOnlinePaise ?? 0) / 100 : selectedOrderTotal
+    const selectedUpiVpa = upiQrProvider === 'secondary' && secondaryUpiVpa.trim() !== ''
+        ? secondaryUpiVpa
+        : upiVpa
+    const isOrderActionInProgress = isOrderSaving || isSavingCommitteeMember || paymentMethodInProgress !== null || pendingPaymentMethod !== null
+    const menuKeywords = menuSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+    const matchingMenuItems = menuItems.filter((item) => {
+        const searchableText = `${item.name} ${item.description ?? ''} ${item.section} ${item.subsection}`.toLocaleLowerCase()
+        return menuKeywords.every((keyword) => searchableText.includes(keyword))
+    })
+    const groupedMenuItems = groupMenuItems(matchingMenuItems).flatMap(({ section, items, subsections }) => [
         ...(items.length > 0 ? [{ section, subsection: '', items }] : []),
         ...subsections.map(({ subsection, items: subsectionItems }) => ({
             section,
@@ -374,16 +575,284 @@ function TableManager({ isActive = true }: TableManagerProps) {
         })),
     ])
 
-    function selectSeating(seatingId: string) {
-        setInvoiceUrl(null)
-        setSelectedSeatingId(seatingId)
+    useEffect(() => {
+        if (menuItemToRevealAddOns === null || !isMenuPickerOpen) return
+
+        const addOnOptions = menuPickerRef.current?.querySelector<HTMLElement>(
+            `#table-menu-option-${menuItemToRevealAddOns} .table-menu-inline-addons`,
+        )
+        if (!addOnOptions) return
+
+        addOnOptions.scrollIntoView?.({ block: 'nearest' })
+        setMenuItemToRevealAddOns(null)
+    }, [isMenuPickerOpen, menuItemToRevealAddOns, selectedOrderLines])
+
+    useEffect(() => {
+        if (!isMenuPickerOpen) return
+
+        function closeOnOutsidePointer(event: PointerEvent) {
+            if (!(event.target instanceof Node) || menuPickerRef.current?.contains(event.target)) return
+
+            setIsMenuPickerOpen(false)
+            setActiveMenuItemId(null)
+        }
+
+        document.addEventListener('pointerdown', closeOnOutsidePointer)
+        return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+    }, [isMenuPickerOpen])
+
+    function getCustomerDetailsForSave(): CustomerDetailsForSave | undefined {
+        if (isCommitteeOrder && !isValidCommitteeDiscount) {
+            setMessage({ tone: 'error', text: 'Committee discount must be between 0 and 100 with at most two decimal places.' })
+            return undefined
+        }
+        if (tableLabelForSave.length > 100) {
+            setMessage({ tone: 'error', text: 'Table name cannot exceed 100 characters.' })
+            return undefined
+        }
+        if (orderDescriptionForSave.length > 500) {
+            setMessage({ tone: 'error', text: 'Order description cannot exceed 500 characters.' })
+            return undefined
+        }
+        if (hasInvalidCustomerName) {
+            setMessage({ tone: 'error', text: 'Enter a name or choose Skip name.' })
+            return undefined
+        }
+        if (hasInvalidCustomerPhone) {
+            setMessage({ tone: 'error', text: 'Enter a valid phone number.' })
+            return undefined
+        }
+        if (hasInvalidCustomerDateOfBirth) {
+            setMessage({ tone: 'error', text: 'Enter a date of birth or choose Skip date of birth.' })
+            return undefined
+        }
+        if (customerDateOfBirth !== '' && isFutureDateOfBirth(customerDateOfBirth)) {
+            setMessage({ tone: 'error', text: 'Date of birth cannot be in the future.' })
+            return undefined
+        }
+        return {
+            ...(isCommitteeOrder ? { committeeDiscountPercent: committeeDiscountValue } : {}),
+            ...(tableLabelForSave !== '' || savedTableLabel !== '' ? { tableLabel: tableLabelForSave } : {}),
+            ...(orderDescriptionForSave !== savedOrderDescription || savedOrderDescription !== ''
+                ? { orderDescription: orderDescriptionForSave }
+                : {}),
+            customerName: customerNameForSave,
+            customerPhone: customerPhoneForSave,
+            customerDateOfBirth: customerDateOfBirthForSave,
+        }
+    }
+
+    function setSelectedCustomerName(name: string) {
+        if (selectedSeating === null) return
+
+        setCustomerNameDraftsBySeating((currentNames) => ({
+            ...currentNames,
+            [selectedSeating.id]: name,
+        }))
+    }
+
+    function setSelectedCustomerFieldEnabled(field: 'name' | 'phone' | 'dateOfBirth', enabled: boolean) {
+        if (selectedSeating === null) return
+        if (field === 'name') {
+            setAddNameEnabledBySeating((currentValues) => ({ ...currentValues, [selectedSeating.id]: enabled }))
+        } else if (field === 'phone') {
+            setAddPhoneEnabledBySeating((currentValues) => ({ ...currentValues, [selectedSeating.id]: enabled }))
+        } else {
+            setAddDateOfBirthEnabledBySeating((currentValues) => ({ ...currentValues, [selectedSeating.id]: enabled }))
+        }
+        clearInvoice()
         setMessage(null)
     }
 
-    async function saveOpenOrder(tableName: string, orderLines: OrderLine[], completed: boolean) {
+    function setSelectedCustomerPhone(phoneNumber: string) {
+        if (selectedSeating === null) return
+
+        setCustomerPhoneDraftsBySeating((currentPhones) => ({
+            ...currentPhones,
+            [selectedSeating.id]: phoneNumber,
+        }))
+    }
+
+    function setSelectedCustomerDateOfBirth(dateOfBirth: string) {
+        if (selectedSeating === null) return
+
+        setCustomerDateOfBirthDraftsBySeating((currentDates) => ({
+            ...currentDates,
+            [selectedSeating.id]: dateOfBirth,
+        }))
+    }
+
+    function selectCustomerProfile(customer: CustomerDetails) {
+        if (selectedSeating !== null) {
+            setCustomerNameDraftsBySeating((currentNames) => ({ ...currentNames, [selectedSeating.id]: customer.name ?? '' }))
+            setCustomerPhoneDraftsBySeating((currentPhones) => ({ ...currentPhones, [selectedSeating.id]: customer.phoneNumber }))
+            setCustomerDateOfBirthDraftsBySeating((currentDates) => ({ ...currentDates, [selectedSeating.id]: customer.dateOfBirth ?? '' }))
+            setAddNameEnabledBySeating((currentValues) => ({ ...currentValues, [selectedSeating.id]: Boolean(customer.name) }))
+            setAddPhoneEnabledBySeating((currentValues) => ({ ...currentValues, [selectedSeating.id]: true }))
+            setAddDateOfBirthEnabledBySeating((currentValues) => ({ ...currentValues, [selectedSeating.id]: Boolean(customer.dateOfBirth) }))
+        }
+        clearInvoice()
+        setCustomerSearchMatches([])
+        setCustomerSearchStatus('found')
+        setIsCreateContactOpen(false)
+        setCustomerSearchMessage('Saved profile filled into this order. Save details with the order to attach it.')
+    }
+
+    async function searchCustomerByPhone(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        const query = customerSearchQuery.trim()
+        if (query === '') {
+            setCustomerSearchMessage('Enter a name or 10-digit mobile number to search.')
+            return
+        }
+        const isPhoneQuery = /^[+0-9().\s-]+$/.test(query)
+        const normalizedPhone = isPhoneQuery ? normalizeCustomerPhoneNumber(query) : null
+        if (isPhoneQuery && normalizedPhone === null) {
+            setCustomerSearchMessage('Enter a valid 10-digit mobile number.')
+            return
+        }
+
+        setIsSearchingCustomer(true)
+        setCustomerSearchMessage(null)
+        try {
+            const response = await fetch(
+                `${apiBaseUrl}/api/customers/search?query=${encodeURIComponent(normalizedPhone ?? query)}`,
+                { credentials: 'include' },
+            )
+            if (!response.ok) throw new Error(`Customer lookup failed: ${response.status}`)
+
+            const result: unknown = await response.json()
+            if (!isCustomerDetailsList(result)) throw new Error('Customer lookup response has an unexpected shape')
+            setCustomerSearchMatches(result)
+            clearInvoice()
+            setIsCreateContactOpen(false)
+            if (result.length === 0) {
+                setCustomerSearchStatus('not-found')
+                setNewContactName(isPhoneQuery ? '' : query)
+                setNewContactPhone(normalizedPhone ?? '')
+                setNewContactDateOfBirth('')
+                setCustomerSearchMessage('No saved profile found. Create a contact or continue without customer details.')
+            } else if (result.length === 1) {
+                selectCustomerProfile(result[0])
+            } else {
+                setCustomerSearchStatus('multiple')
+                setCustomerSearchMessage(`${result.length} matching customers found. Choose one to fill this order.`)
+            }
+        } catch {
+            setCustomerSearchMessage('We could not search customer details. Please try again.')
+        } finally {
+            setIsSearchingCustomer(false)
+        }
+    }
+
+    async function createCustomerContact(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        const rawPhone = newContactPhone.trim()
+        const normalizedPhone = normalizeCustomerPhoneNumber(rawPhone)
+        if (rawPhone !== '' && normalizedPhone === null) {
+            setCustomerSearchMessage('Enter a valid phone number for the new contact.')
+            return
+        }
+
+        if (normalizedPhone === null) {
+            if (selectedSeating !== null) {
+                setSelectedCustomerName(newContactName)
+                setSelectedCustomerPhone('')
+                setSelectedCustomerDateOfBirth(newContactDateOfBirth)
+                setSelectedCustomerFieldEnabled('name', newContactName.trim() !== '')
+                setSelectedCustomerFieldEnabled('phone', false)
+                setSelectedCustomerFieldEnabled('dateOfBirth', newContactDateOfBirth !== '')
+            }
+            setCustomerSearchStatus('found')
+            setIsCreateContactOpen(false)
+            setCustomerSearchMessage('Details added to this order. Add a phone to save a directory profile.')
+            return
+        }
+
+        setIsSavingNewContact(true)
+        setCustomerSearchMessage(null)
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/customers`, {
+                body: JSON.stringify({
+                    dateOfBirth: newContactDateOfBirth || null,
+                    name: newContactName.trim() || null,
+                    phoneNumber: normalizedPhone,
+                }),
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                method: 'POST',
+            })
+            if (!response.ok) throw new Error(`Customer save failed: ${response.status}`)
+
+            const result: unknown = await response.json()
+            if (!isCustomerDetails(result)) throw new Error('Customer save response has an unexpected shape')
+            if (selectedSeating !== null) {
+                setCustomerNameDraftsBySeating((currentNames) => ({
+                    ...currentNames,
+                    [selectedSeating.id]: result.name ?? '',
+                }))
+                setCustomerPhoneDraftsBySeating((currentPhones) => ({
+                    ...currentPhones,
+                    [selectedSeating.id]: result.phoneNumber,
+                }))
+                setCustomerDateOfBirthDraftsBySeating((currentDates) => ({
+                    ...currentDates,
+                    [selectedSeating.id]: result.dateOfBirth ?? '',
+                }))
+                setAddNameEnabledBySeating((currentValues) => ({
+                    ...currentValues,
+                    [selectedSeating.id]: Boolean(result.name),
+                }))
+                setAddPhoneEnabledBySeating((currentValues) => ({
+                    ...currentValues,
+                    [selectedSeating.id]: true,
+                }))
+                setAddDateOfBirthEnabledBySeating((currentValues) => ({
+                    ...currentValues,
+                    [selectedSeating.id]: Boolean(result.dateOfBirth),
+                }))
+            }
+            setCustomerSearchQuery(result.phoneNumber)
+            setCustomerSearchStatus('found')
+            setIsCreateContactOpen(false)
+            setCustomerSearchMessage('Contact saved and filled into this order. Save details to attach it to the order.')
+        } catch {
+            setCustomerSearchMessage('We could not save this contact. Please try again.')
+        } finally {
+            setIsSavingNewContact(false)
+        }
+    }
+
+    function selectSeating(seatingId: string) {
+        clearInvoice()
+        setCommitteeMessage(null)
+        setIsSplitPayment(false)
+        setSplitCashAmount('')
+        setSplitOnlineAmount('')
+        setUpiQrSeatingId(null)
+        setUpiQrProvider('primary')
+        setMenuSearch('')
+        setIsMenuPickerOpen(false)
+        setActiveMenuItemId(null)
+        setSelectedSeatingId(seatingId)
+        setCustomerSearchQuery(ordersBySeating[seatingId]?.customerPhone ?? '')
+        setCustomerSearchMessage(null)
+        setCustomerSearchStatus('idle')
+        setIsCreateContactOpen(false)
+        setMessage(null)
+    }
+
+    function clearInvoice() {
+        setInvoiceUrl(null)
+        setInvoiceReference(null)
+        setInvoiceWhatsAppPhone('')
+    }
+
+    async function saveOpenOrder(tableName: string, orderLines: OrderLine[], completed: boolean, customerDetails: CustomerDetailsForSave) {
         const response = await fetch(`${apiBaseUrl}/api/open-orders`, {
             body: JSON.stringify({
                 completed,
+                ...customerDetails,
                 lines: orderLines.map((orderLine) => ({
                     menuItemId: orderLine.menuItemId,
                     quantity: orderLine.quantity,
@@ -410,6 +879,10 @@ function TableManager({ isActive = true }: TableManagerProps) {
     }
 
     function applySavedOrder(intent: OrderSaveIntent, savedOpenOrder: OpenOrderState | null) {
+        if (intent.seatingId.startsWith('committee-')) {
+            setCommitteeDiscountDrafts((current) => ({ ...current, [intent.seatingId]: String(savedOpenOrder?.committeeDiscountPercent ?? 0) }))
+        }
+        setTableLabelDraftsBySeating((current) => ({ ...current, [intent.seatingId]: savedOpenOrder?.tableLabel ?? '' }))
         setOrdersBySeating((currentOrders) => {
             const nextOrders = { ...currentOrders }
             if (savedOpenOrder === null) {
@@ -420,14 +893,62 @@ function TableManager({ isActive = true }: TableManagerProps) {
 
             return nextOrders
         })
-        if (intent.resetOrderDraft) {
-            setSelectedMenuItemId('')
-            setSelectedAddOnIds([])
-            setQuantity('1')
-        }
+        setCustomerNameDraftsBySeating((currentNames) => {
+            const nextNames = { ...currentNames }
+            if (savedOpenOrder === null) {
+                delete nextNames[intent.seatingId]
+            } else {
+                nextNames[intent.seatingId] = savedOpenOrder.customerName ?? ''
+            }
+            return nextNames
+        })
+        setOrderDescriptionDraftsBySeating((currentDescriptions) => {
+            const nextDescriptions = { ...currentDescriptions }
+            if (savedOpenOrder === null) delete nextDescriptions[intent.seatingId]
+            else nextDescriptions[intent.seatingId] = savedOpenOrder.orderDescription ?? ''
+            return nextDescriptions
+        })
+        setCustomerPhoneDraftsBySeating((currentPhones) => {
+            const nextPhones = { ...currentPhones }
+            if (savedOpenOrder === null) {
+                delete nextPhones[intent.seatingId]
+            } else {
+                nextPhones[intent.seatingId] = savedOpenOrder.customerPhone ?? ''
+            }
+            return nextPhones
+        })
+        setCustomerDateOfBirthDraftsBySeating((currentDates) => {
+            const nextDates = { ...currentDates }
+            if (savedOpenOrder === null) {
+                delete nextDates[intent.seatingId]
+            } else {
+                nextDates[intent.seatingId] = savedOpenOrder.customerDateOfBirth ?? ''
+            }
+            return nextDates
+        })
+        setAddNameEnabledBySeating((currentValues) => {
+            const nextValues = { ...currentValues }
+            if (savedOpenOrder === null) delete nextValues[intent.seatingId]
+            else nextValues[intent.seatingId] = Boolean(savedOpenOrder.customerName?.trim())
+            return nextValues
+        })
+        setAddPhoneEnabledBySeating((currentValues) => {
+            const nextValues = { ...currentValues }
+            if (savedOpenOrder === null) delete nextValues[intent.seatingId]
+            else nextValues[intent.seatingId] = Boolean(savedOpenOrder.customerPhone)
+            return nextValues
+        })
+        setAddDateOfBirthEnabledBySeating((currentValues) => {
+            const nextValues = { ...currentValues }
+            if (savedOpenOrder === null) delete nextValues[intent.seatingId]
+            else nextValues[intent.seatingId] = Boolean(savedOpenOrder.customerDateOfBirth)
+            return nextValues
+        })
         if (intent.resetInvoice) {
-            setInvoiceUrl(null)
+            clearInvoice()
         }
+        setCustomerSearchMessage(null)
+        setCustomerSearchStatus('idle')
         setFailedOrderSave(null)
         setLastOrderSave({ savedAt: new Date(), seatingId: intent.seatingId })
         setMessage({ tone: 'success', text: intent.successMessage })
@@ -441,7 +962,19 @@ function TableManager({ isActive = true }: TableManagerProps) {
         setMessage(null)
 
         try {
-            const savedOpenOrder = await saveOpenOrder(intent.tableName, intent.orderLines, intent.completed)
+            const savedOpenOrder = await saveOpenOrder(
+                intent.tableName,
+                intent.orderLines,
+                intent.completed,
+                {
+                    ...(intent.tableLabel !== undefined ? { tableLabel: intent.tableLabel } : {}),
+                    orderDescription: intent.orderDescription,
+                    ...(intent.committeeDiscountPercent !== undefined ? { committeeDiscountPercent: intent.committeeDiscountPercent } : {}),
+                    customerName: intent.customerName,
+                    customerPhone: intent.customerPhone,
+                    customerDateOfBirth: intent.customerDateOfBirth,
+                },
+            )
             applySavedOrder(intent, savedOpenOrder)
         } catch {
             setFailedOrderSave(intent)
@@ -457,204 +990,318 @@ function TableManager({ isActive = true }: TableManagerProps) {
         void persistOrder(failedOrderSave)
     }
 
-    async function addMenuItemToOrder(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault()
-
-        if (selectedSeating === null || selectedMenuItem === undefined) {
-            setMessage({ tone: 'error', text: 'Choose a menu item.' })
+    function toggleMenuItem(menuItem: MenuItem, checked: boolean) {
+        if (selectedSeating === null || isOrderActionInProgress) return
+        const existing = selectedOrderLines.find((line) => line.menuItemId === menuItem.id)
+        if (!checked) {
+            if (expandedAddOnMenuItemId === menuItem.id) setExpandedAddOnMenuItemId(null)
+            if (menuItemToRevealAddOns === menuItem.id) setMenuItemToRevealAddOns(null)
+            if (existing) saveMenuSelection(selectedOrderLines.filter((line) => line.menuItemId !== menuItem.id), `${menuItem.name} removed from ${selectedSeatingName}.`)
             return
         }
-
-        if (!hasValidQuantity) {
-            setMessage({ tone: 'error', text: 'Quantity must be a whole number of at least 1.' })
+        if (existing) return
+        if (selectedOrderLines.length >= 100) {
+            setMessage({ tone: 'error', text: 'An order can contain at most 100 lines.' })
             return
         }
-
-        const unitPrice = getUnitPrice(selectedMenuItem, selectedAddOns)
-        const newOrderLine: OrderLine = {
-            menuItemId: selectedMenuItem.id,
-            name: selectedMenuItem.name,
-            quantity: parsedQuantity,
-            unitPrice,
-            addOns: selectedAddOns,
+        const line: OrderLine = {
+            menuItemId: menuItem.id,
+            name: menuItem.name,
+            section: menuItem.section,
+            quantity: 1,
+            unitPrice: getUnitPrice(menuItem),
+            addOns: [],
         }
-        const newOrderLineKey = getOrderLineKey(newOrderLine)
-        const matchingOrderLine = selectedOrderLines.find(
-            (orderLine) => getOrderLineKey(orderLine) === newOrderLineKey,
-        )
-        const nextOrderLines = matchingOrderLine
-            ? selectedOrderLines.map((orderLine) => orderLine.menuItemId === selectedMenuItem.id
-                && getOrderLineKey(orderLine) === newOrderLineKey
-                ? { ...orderLine, quantity: orderLine.quantity + parsedQuantity }
-                : orderLine)
-            : [...selectedOrderLines, newOrderLine]
+        if (menuItem.addOns.length > 0) {
+            setExpandedAddOnMenuItemId(menuItem.id)
+            setMenuItemToRevealAddOns(menuItem.id)
+        }
+        saveMenuSelection([...selectedOrderLines, line], `${menuItem.name} added to ${selectedSeatingName}.`)
+    }
+
+    function toggleAddOnDropdown(menuItem: MenuItem) {
+        const shouldExpand = expandedAddOnMenuItemId !== menuItem.id
+        setExpandedAddOnMenuItemId(shouldExpand ? menuItem.id : null)
+        setMenuItemToRevealAddOns(shouldExpand ? menuItem.id : null)
+    }
+
+    function toggleOrderAddOn(menuItem: MenuItem, line: OrderLine, addOn: MenuAddOn, checked: boolean) {
+        if (selectedSeating === null || isOrderActionInProgress) return
+        const addOns = checked ? [...line.addOns, addOn] : line.addOns.filter((item) => item.id !== addOn.id)
+        const lines = selectedOrderLines.map((item) => getOrderLineKey(item) === getOrderLineKey(line)
+            ? { ...item, addOns, unitPrice: getUnitPrice(menuItem, addOns) } : item)
+        saveMenuSelection(mergeOrderLines([], lines), `${menuItem.name} add-ons updated.`)
+    }
+
+    function saveMenuSelection(nextOrderLines: OrderLine[], successMessage: string) {
+        if (selectedSeating === null || isOrderActionInProgress) return
+        if (nextOrderLines.some((item) => item.quantity > 10_000) || nextOrderLines.length > 100) {
+            setMessage({ tone: 'error', text: 'An order can contain at most 100 lines and 10000 of each item.' })
+            return
+        }
+        const customerDetails = getCustomerDetailsForSave()
+        if (customerDetails === undefined) return
 
         void persistOrder({
             completed: false,
+            ...customerDetails,
             orderLines: nextOrderLines,
-            resetOrderDraft: true,
+            resetInvoice: true,
             seatingId: selectedSeating.id,
-            successMessage: `${getOrderLineDisplayName(newOrderLine)} added to ${selectedSeating.name}.`,
+            successMessage,
             tableName: selectedSeating.name,
         })
     }
 
     async function removeOrderLine(orderLine: OrderLine) {
         if (selectedSeating === null) return
+        const customerDetails = getCustomerDetailsForSave()
+        if (customerDetails === undefined) return
 
         const nextOrderLines = selectedOrderLines.filter(
             (currentOrderLine) => getOrderLineKey(currentOrderLine) !== getOrderLineKey(orderLine),
         )
         void persistOrder({
             completed: false,
+            ...customerDetails,
             orderLines: nextOrderLines,
             seatingId: selectedSeating.id,
-            successMessage: `${getOrderLineDisplayName(orderLine)} removed from ${selectedSeating.name}.`,
+            successMessage: `${getOrderLineDisplayName(orderLine)} removed from ${selectedSeatingName}.`,
+            tableName: selectedSeating.name,
+        })
+    }
+
+    function adjustOrderLineQuantity(orderLine: OrderLine, change: number) {
+        if (selectedSeating === null || isOrderSaving) return
+        const customerDetails = getCustomerDetailsForSave()
+        if (customerDetails === undefined) return
+
+        const lineKey = getOrderLineKey(orderLine)
+        const nextQuantity = orderLine.quantity + change
+        if (nextQuantity < 1) return
+        const nextOrderLines = selectedOrderLines.map((currentOrderLine) => (
+            getOrderLineKey(currentOrderLine) === lineKey
+                ? { ...currentOrderLine, quantity: nextQuantity }
+                : currentOrderLine
+        ))
+        void persistOrder({
+            completed: false,
+            ...customerDetails,
+            orderLines: nextOrderLines,
+            resetInvoice: true,
+            seatingId: selectedSeating.id,
+            successMessage: `${getOrderLineDisplayName(orderLine)} quantity updated to ${nextQuantity}.`,
             tableName: selectedSeating.name,
         })
     }
 
     async function completeOrder() {
         if (selectedSeating === null || selectedOrderLines.length === 0 || isOrderCompleted) return
+        const customerDetails = getCustomerDetailsForSave()
+        if (customerDetails === undefined) return
 
         void persistOrder({
             completed: true,
+            ...customerDetails,
             orderLines: selectedOrderLines,
             resetInvoice: true,
             seatingId: selectedSeating.id,
-            successMessage: `${selectedSeating.name} completed. Final price: ${currencyFormatter.format(selectedOrderTotal)}.`,
+            successMessage: `${selectedSeatingName} completed. Final price: ${currencyFormatter.format(selectedOrderTotal)}.`,
             tableName: selectedSeating.name,
         })
     }
 
     async function openTable() {
         if (selectedSeating === null || selectedOrderLines.length === 0 || !isOrderCompleted) return
+        const customerDetails = getCustomerDetailsForSave()
+        if (customerDetails === undefined) return
 
         void persistOrder({
             completed: false,
+            ...customerDetails,
             orderLines: selectedOrderLines,
             resetInvoice: true,
             seatingId: selectedSeating.id,
-            successMessage: `${selectedSeating.name} is open for more items.`,
+            successMessage: `${selectedSeatingName} is open for more items.`,
+            tableName: selectedSeating.name,
+        })
+    }
+
+    async function addCommitteeMember(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        if (!canManageCommitteeMembers || isOrderActionInProgress) return
+        const name = newCommitteeName.trim().replace(/\s+/g, ' ')
+        if (!/^[\p{L}\p{N}][\p{L}\p{N} .'-]{0,19}$/u.test(name)) {
+            setCommitteeMessage({ tone: 'error', text: 'Enter a member name of 1 to 20 letters, numbers, spaces, apostrophes, dots, or hyphens.' })
+            return
+        }
+        setIsSavingCommitteeMember(true)
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/committee-members`, {
+                method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+            })
+            if (response.status === 409) {
+                setCommitteeMessage({ tone: 'error', text: 'A Committee member with this name already exists.' })
+                return
+            }
+            if (!response.ok) throw new Error('Member save failed')
+            const member: unknown = await response.json()
+            if (!isCommitteeMember(member)) throw new Error('Unexpected member response')
+            setCommitteeMembers((current) => [...current, member])
+            setNewCommitteeName('')
+            selectSeating(`committee-${member.name.toLowerCase()}`)
+            setCommitteeMessage({ tone: 'success', text: 'Committee member added.' })
+        } catch {
+            setCommitteeMessage({ tone: 'error', text: 'We could not add this Committee member. Please try again.' })
+        } finally {
+            setIsSavingCommitteeMember(false)
+        }
+    }
+
+    async function deleteCommitteeMember() {
+        const member = committeeMemberPendingDeletion
+        if (member === null || member.protectedMember || !canManageCommitteeMembers || isSavingCommitteeMember) return
+        setIsSavingCommitteeMember(true)
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/committee-members/${member.id}`, { method: 'DELETE', credentials: 'include' })
+            if (response.status === 409) {
+                setCommitteeMessage({ tone: 'error', text: "Settle this member's unpaid order before deleting them." })
+                return
+            }
+            if (!response.ok) throw new Error('Member deletion failed')
+            const id = `committee-${member.name.toLowerCase()}`
+            setCommitteeMembers((current) => current.filter((item) => item.id !== member.id))
+            setCommitteeDiscountDrafts((current) => ({ ...current, [id]: '0' }))
+            setTableLabelDraftsBySeating((current) => ({ ...current, [id]: '' }))
+            setCustomerNameDraftsBySeating((current) => ({ ...current, [id]: '' }))
+            setCustomerPhoneDraftsBySeating((current) => ({ ...current, [id]: '' }))
+            setCustomerDateOfBirthDraftsBySeating((current) => ({ ...current, [id]: '' }))
+            setFailedOrderSave((current) => current?.seatingId === id ? null : current)
+            if (selectedSeatingId === id) setSelectedSeatingId(null)
+            setCommitteeMessage({ tone: 'success', text: 'Committee member deleted.' })
+        } catch {
+            setCommitteeMessage({ tone: 'error', text: 'We could not delete this Committee member. Please try again.' })
+        } finally {
+            setCommitteeMemberPendingDeletion(null)
+            setIsSavingCommitteeMember(false)
+        }
+    }
+
+    function applyCommitteeDiscount() {
+        if (selectedSeating === null || !isCommitteeOrder || isOrderActionInProgress) return
+        const details = getCustomerDetailsForSave()
+        if (details === undefined) return
+        if (selectedOrderLines.length === 0) {
+            setMessage({ tone: 'success', text: `Committee discount set to ${committeeDiscountValue}%.` })
+            return
+        }
+        void persistOrder({
+            completed: isOrderCompleted, ...details, orderLines: selectedOrderLines, resetInvoice: true,
+            seatingId: selectedSeating.id, tableName: selectedSeating.name,
+            successMessage: `${selectedSeatingName} discount updated to ${committeeDiscountValue}%.`,
+        })
+    }
+
+    function saveTableLabel() {
+        if (selectedSeating === null || selectedOrderLines.length === 0 || isOrderSaving) return
+        const details = getCustomerDetailsForSave()
+        if (details === undefined) return
+        void persistOrder({
+            completed: isOrderCompleted,
+            ...details,
+            orderLines: selectedOrderLines,
+            resetInvoice: true,
+            seatingId: selectedSeating.id,
+            successMessage: tableLabelForSave ? 'Table name saved.' : 'Table name cleared.',
+            tableName: selectedSeating.name,
+        })
+    }
+
+    function saveCustomerDetails() {
+        if (selectedSeating === null || selectedOrderLines.length === 0 || isOrderSaving) return
+        const customerDetails = getCustomerDetailsForSave()
+        if (customerDetails === undefined) return
+        const hasDetails = Object.values(customerDetails).some((value) => value !== null)
+
+        void persistOrder({
+            completed: isOrderCompleted,
+            ...customerDetails,
+            orderLines: selectedOrderLines,
+            resetInvoice: true,
+            seatingId: selectedSeating.id,
+            successMessage: hasDetails
+                ? `Customer details saved for ${selectedSeatingName}.`
+                : `Customer details cleared for ${selectedSeatingName}.`,
+            tableName: selectedSeating.name,
+        })
+    }
+
+    function saveOrderDescription() {
+        if (selectedSeating === null || selectedOrderLines.length === 0 || isOrderSaving) return
+        const details = getCustomerDetailsForSave()
+        if (details === undefined) return
+        void persistOrder({
+            completed: isOrderCompleted,
+            ...details,
+            orderLines: selectedOrderLines,
+            resetInvoice: true,
+            seatingId: selectedSeating.id,
+            successMessage: orderDescriptionForSave ? 'Order description saved.' : 'Order description cleared.',
             tableName: selectedSeating.name,
         })
     }
 
     function createInvoice() {
-        if (selectedSeating === null || selectedOrderLines.length === 0 || !isOrderCompleted) return
+        if (selectedSeating === null || selectedOrderLines.length === 0 || !isOrderCompleted
+            || isOrderDetailsDirty || hasInvalidCustomerDetails) return
 
-        const invoice = new jsPDF({ format: 'a4', unit: 'pt' })
         const createdAt = new Date()
         const invoiceReference = getInvoiceReference(createdAt, selectedSeating.name)
-        const pageLeft = 48
-        const pageRight = 548
-        const footerY = 782
+        const invoice = createOrderDocument({
+            documentTitle: 'INVOICE',
+            issuedAt: createdAt,
+            lines: selectedOrderLines.map((orderLine) => ({
+                itemName: getOrderLineDisplayName(orderLine),
+                lineTotal: getLineTotal(orderLine),
+                quantity: orderLine.quantity,
+                section: orderLine.section,
+                unitPrice: orderLine.unitPrice,
+            })),
+            paymentMethod: null,
+            paymentStatus: 'PENDING',
+            reference: invoiceReference,
+            restaurantName,
+            seatingName: selectedSeatingName,
+            isCommitteeOrder,
+            customerName: selectedOpenOrder?.customerName,
+            orderDescription: selectedOpenOrder?.orderDescription,
+            subtotal: selectedOrderSubtotal,
+            discountPercent: selectedDiscountPercent,
+            discountAmount: selectedDiscountAmount,
+            total: selectedOrderTotal,
+        })
+        setInvoiceUrl(URL.createObjectURL(invoice))
+        setInvoiceReference(invoiceReference)
+        setInvoiceWhatsAppPhone('')
+    }
 
-        function addInvoiceFooter() {
-            invoice.setDrawColor(205, 210, 204)
-            invoice.line(pageLeft, footerY - 12, pageRight, footerY - 12)
-            invoice.setFontSize(8)
-            invoice.setTextColor(91, 102, 92)
-            invoice.text(`Thank you for dining with ${restaurantName}.`, pageLeft, footerY)
-            invoice.text('Computer-generated invoice', pageRight, footerY, { align: 'right' })
-        }
+    function openInvoiceInWhatsApp() {
+        const normalizedPhone = selectedOpenOrder?.customerPhone
+            ?? normalizeCustomerPhoneNumber(invoiceWhatsAppPhone)
+        const phoneNumber = normalizedPhone?.replace(/\D/g, '')
+        if (selectedSeating === null || invoiceReference === null || !phoneNumber) return
 
-        function addTableHeader(top: number) {
-            invoice.setFillColor(42, 58, 46)
-            invoice.rect(pageLeft, top, pageRight - pageLeft, 26, 'F')
-            invoice.setFontSize(8)
-            invoice.setTextColor(255, 255, 255)
-            invoice.text('NO.', 58, top + 17)
-            invoice.text('ITEM', 88, top + 17)
-            invoice.text('QTY', 368, top + 17, { align: 'right' })
-            invoice.text('RATE', 442, top + 17, { align: 'right' })
-            invoice.text('AMOUNT', 538, top + 17, { align: 'right' })
-        }
-
-        invoice.setFillColor(42, 58, 46)
-        invoice.rect(pageLeft, 48, pageRight - pageLeft, 74, 'F')
-        invoice.setTextColor(255, 255, 255)
-        invoice.setFontSize(22)
-        invoice.text(restaurantName.toLocaleUpperCase('en-IN'), 64, 80)
-        invoice.setFontSize(9)
-        invoice.text('RESTAURANT BILLING', 64, 98)
-        invoice.setFontSize(18)
-        invoice.text('INVOICE', 532, 80, { align: 'right' })
-        invoice.setFontSize(9)
-        invoice.text('PAYMENT PENDING', 532, 98, { align: 'right' })
-
-        invoice.setTextColor(42, 48, 43)
-        invoice.setFontSize(10)
-        invoice.text(`Invoice no. ${invoiceReference}`, pageLeft, 152)
-        invoice.text(`Issued: ${formatDateTime(createdAt.toISOString())}`, pageLeft, 170)
-        invoice.text(`Seating: ${selectedSeating.name}`, pageRight, 152, { align: 'right' })
-        invoice.text('Payment status: Pending', pageRight, 170, { align: 'right' })
-        invoice.setDrawColor(205, 210, 204)
-        invoice.line(pageLeft, 188, pageRight, 188)
-
-        let cursorY = 210
-        addTableHeader(cursorY)
-        cursorY += 26
-
-        for (const [index, orderLine] of selectedOrderLines.entries()) {
-            const itemLines = invoice.splitTextToSize(getOrderLineDisplayName(orderLine), 244)
-            const rowHeight = Math.max(32, itemLines.length * 12 + 16)
-
-            if (cursorY + rowHeight > 700) {
-                addInvoiceFooter()
-                invoice.addPage()
-                invoice.setFontSize(10)
-                invoice.setTextColor(42, 48, 43)
-                invoice.text(`${restaurantName.toLocaleUpperCase('en-IN')} | Order invoice continued`, pageLeft, 56)
-                invoice.text(invoiceReference, pageRight, 56, { align: 'right' })
-                cursorY = 76
-                addTableHeader(cursorY)
-                cursorY += 26
-            }
-
-            invoice.setFontSize(10)
-            invoice.setTextColor(42, 48, 43)
-            invoice.text(String(index + 1), 58, cursorY + 18)
-            invoice.text(itemLines, 88, cursorY + 18)
-            invoice.text(String(orderLine.quantity), 368, cursorY + 18, { align: 'right' })
-            invoice.text(`INR ${orderLine.unitPrice.toFixed(2)}`, 442, cursorY + 18, { align: 'right' })
-            invoice.text(`INR ${getLineTotal(orderLine).toFixed(2)}`, 538, cursorY + 18, { align: 'right' })
-            invoice.setDrawColor(225, 228, 224)
-            invoice.line(pageLeft, cursorY + rowHeight, pageRight, cursorY + rowHeight)
-            cursorY += rowHeight
-        }
-
-        if (cursorY > 652) {
-            addInvoiceFooter()
-            invoice.addPage()
-            invoice.setFontSize(10)
-            invoice.setTextColor(42, 48, 43)
-            invoice.text(`${restaurantName.toLocaleUpperCase('en-IN')} | Invoice summary`, pageLeft, 56)
-            invoice.text(invoiceReference, pageRight, 56, { align: 'right' })
-            cursorY = 82
-        }
-
-        const totalTop = cursorY + 16
-        invoice.setDrawColor(42, 58, 46)
-        invoice.line(330, totalTop, pageRight, totalTop)
-        invoice.setFontSize(10)
-        invoice.setTextColor(42, 48, 43)
-        invoice.text('Subtotal', 442, totalTop + 18, { align: 'right' })
-        invoice.text(`INR ${selectedOrderSubtotal.toFixed(2)}`, pageRight, totalTop + 18, { align: 'right' })
-        const hasBillDiscount = selectedDiscountAmount > 0
-        if (hasBillDiscount) {
-            invoice.text(`Bill discount (${selectedDiscountPercent.toFixed(2)}%)`, 442, totalTop + 36, { align: 'right' })
-            invoice.text(`- INR ${selectedDiscountAmount.toFixed(2)}`, pageRight, totalTop + 36, { align: 'right' })
-        }
-        const totalY = totalTop + (hasBillDiscount ? 62 : 44)
-        invoice.text('Final bill', 442, totalY, { align: 'right' })
-        invoice.setFontSize(16)
-        invoice.text(`INR ${selectedOrderTotal.toFixed(2)}`, pageRight, totalY, { align: 'right' })
-        invoice.setFontSize(9)
-        invoice.setTextColor(91, 102, 92)
-        invoice.text('Please settle the bill at the counter.', pageLeft, totalY)
-        addInvoiceFooter()
-        setInvoiceUrl(URL.createObjectURL(invoice.output('blob')))
+        const message = [
+            `Hello! Here are the invoice details from ${restaurantName}.`,
+            `Invoice: ${invoiceReference}`,
+            `Seating: ${selectedSeatingName}`,
+            `Ordering name: ${formatCustomerName(selectedOpenOrder?.customerName)}`,
+            `Amount due: ${currencyFormatter.format(selectedOrderTotal)}.`,
+            '',
+            'Please attach the downloaded invoice PDF before sending.',
+        ].join('\n')
+        const whatsappUrl = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`
+        window.open(whatsappUrl, '_blank', 'noopener,noreferrer')
     }
 
     function createPaidReceipt() {
@@ -666,10 +1313,16 @@ function TableManager({ isActive = true }: TableManagerProps) {
             issuedAt: new Date(lastPaidOrder.paidAt),
             lines: lastPaidOrder.lines,
             paymentMethod: lastPaidOrder.paymentMethod,
+            cashAmount: lastPaidOrder.cashAmount,
+            onlineAmount: lastPaidOrder.onlineAmount,
             paymentStatus: 'PAID',
             reference: lastPaidOrder.billNumber,
             restaurantName,
-            seatingName: lastPaidOrder.tableName,
+            seatingName: getTableDisplayName(lastPaidOrder),
+            isCommitteeOrder: lastPaidOrder.tableName.startsWith('Committee '),
+            tableLabel: lastPaidOrder.tableLabel,
+            customerName: lastPaidOrder.customerName,
+            orderDescription: lastPaidOrder.orderDescription,
             subtotal: lastPaidOrder.subtotal ?? lastPaidOrder.total + (lastPaidOrder.discountAmount ?? 0),
             discountPercent: lastPaidOrder.discountPercent ?? 0,
             discountAmount: lastPaidOrder.discountAmount ?? 0,
@@ -686,6 +1339,10 @@ function TableManager({ isActive = true }: TableManagerProps) {
     }
 
     function restartTable() {
+        if (selectedSeating !== null) {
+            setCommitteeDiscountDrafts((current) => ({ ...current, [selectedSeating.id]: '0' }))
+            setTableLabelDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: '' }))
+        }
         if (selectedSeating === null || !hasJustPaid) return
 
         setOrdersBySeating((currentOrders) => {
@@ -693,20 +1350,24 @@ function TableManager({ isActive = true }: TableManagerProps) {
             delete nextOrders[selectedSeating.id]
             return nextOrders
         })
-        setInvoiceUrl(null)
+        clearInvoice()
         setPaidReceiptUrl(null)
         setIsPaidReceiptReadyToPrint(false)
         setLastPaidSeatingId(null)
         setLastPaidOrder(null)
         setMessage(null)
-        setQuantity('1')
-        setSelectedMenuItemId('')
-        setSelectedAddOnIds([])
+        setMenuSearch('')
+        setIsMenuPickerOpen(false)
         setSelectedSeatingId(null)
     }
 
     async function settleOrder(paymentMethod: PaymentMethod) {
         if (selectedSeating === null || selectedOrderLines.length === 0 || isOrderSaving || !isOrderCompleted) return
+        if (paymentMethod === 'SPLIT' && !isValidSplit) {
+            setMessage({ tone: 'error', text: 'Cash and online amounts must be positive and add up to the bill total.' })
+            setPendingPaymentMethod(null)
+            return
+        }
 
         setPaymentMethodInProgress(paymentMethod)
         setMessage(null)
@@ -716,6 +1377,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                 body: JSON.stringify({
                     paymentMethod,
                     tableName: selectedSeating.name,
+                    ...(paymentMethod === 'SPLIT' ? { cashAmount: (splitCashPaise ?? 0) / 100, onlineAmount: (splitOnlinePaise ?? 0) / 100 } : {}),
                 }),
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
@@ -736,15 +1398,20 @@ function TableManager({ isActive = true }: TableManagerProps) {
                 delete nextOrders[selectedSeating.id]
                 return nextOrders
             })
-            setInvoiceUrl(null)
+            clearInvoice()
             setPaidReceiptUrl(null)
             setIsPaidReceiptReadyToPrint(false)
             setLastPaidSeatingId(selectedSeating.id)
             setLastPaidOrder(paidOrder)
+            setTableLabelDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: paidOrder.tableLabel ?? '' }))
+            setOrderDescriptionDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: paidOrder.orderDescription ?? '' }))
             setUpiQrSeatingId(null)
+            setIsSplitPayment(false)
+            setSplitCashAmount('')
+            setSplitOnlineAmount('')
             setMessage({
                 tone: 'success',
-                text: `${selectedSeating.name} paid by ${getPaymentMethodLabel(paymentMethod).toLowerCase()}: ${currencyFormatter.format(paidOrder.total)}.`,
+                text: `${selectedSeatingName} paid by ${getPaymentMethodLabel(paymentMethod).toLowerCase()}: ${currencyFormatter.format(paidOrder.total)}.`,
             })
         } catch {
             setMessage({ tone: 'error', text: 'We could not record this payment. Please try again.' })
@@ -756,6 +1423,18 @@ function TableManager({ isActive = true }: TableManagerProps) {
 
     function requestPayment(paymentMethod: PaymentMethod) {
         if (selectedSeating === null || selectedOrderLines.length === 0 || isOrderSaving || !isOrderCompleted) return
+        if (paymentMethod === 'SPLIT' && !isValidSplit) {
+            setMessage({ tone: 'error', text: 'Cash and online amounts must be positive and add up to the bill total.' })
+            return
+        }
+        if (hasInvalidCustomerDetails) {
+            getCustomerDetailsForSave()
+            return
+        }
+        if (isOrderDetailsDirty) {
+            setMessage({ tone: 'error', text: isOrderDescriptionDirty ? 'Save the order description before recording payment.' : isCommitteeDiscountDirty ? 'Apply the committee discount before recording payment.' : isTableLabelDirty ? 'Save the table name before recording payment.' : 'Save customer details before recording payment.' })
+            return
+        }
 
         setPendingPaymentMethod(paymentMethod)
     }
@@ -795,20 +1474,21 @@ function TableManager({ isActive = true }: TableManagerProps) {
                     <div className="table-grid">
                         {tableSpots.map((tableSpot) => {
                             const seatingStatus = getSeatingStatus(ordersBySeating[tableSpot.id])
+                            const displayName = getTableDisplayName({ tableName: tableSpot.name, tableLabel: tableLabelDraftsBySeating[tableSpot.id] ?? ordersBySeating[tableSpot.id]?.tableLabel })
 
                             return (
                                 <button
                                     aria-describedby={`seat-status-${tableSpot.id}`}
-                                    aria-label={tableSpot.name}
+                                    aria-label={displayName}
                                     aria-pressed={selectedSeating?.id === tableSpot.id}
                                     className={`table-selector table-selector-${seatingStatus.tone}`}
                                     disabled={isOrderActionInProgress}
                                     key={tableSpot.id}
                                     onClick={() => selectSeating(tableSpot.id)}
-                                    title={`${seatingStatus.label}: ${seatingStatus.detail}`}
+                                    title={`${displayName}: ${seatingStatus.label}: ${seatingStatus.detail}`}
                                     type="button"
                                 >
-                                    <span aria-hidden="true" className="seating-selector-name">{tableSpot.name}</span>
+                                    <span aria-hidden="true" className="seating-selector-name">{displayName}</span>
                                     <span aria-hidden="true" className="seating-selector-meta">
                                         <span className="seating-selector-status">{seatingStatus.label}</span>
                                         <span className="seating-selector-detail">{seatingStatus.detail}</span>
@@ -843,21 +1523,24 @@ function TableManager({ isActive = true }: TableManagerProps) {
                     <div className="outdoor-grid">
                         {outdoorSpots.map((outdoorSpot) => {
                             const seatingStatus = getSeatingStatus(ordersBySeating[outdoorSpot.id])
+                            const displayName = getTableDisplayName({ tableName: outdoorSpot.name, tableLabel: tableLabelDraftsBySeating[outdoorSpot.id] ?? ordersBySeating[outdoorSpot.id]?.tableLabel })
 
                             return (
                                 <button
                                     aria-describedby={`seat-status-${outdoorSpot.id}`}
-                                    aria-label={outdoorSpot.name}
+                                    aria-label={displayName}
                                     aria-pressed={selectedSeating?.id === outdoorSpot.id}
                                     className={`outdoor-selector outdoor-selector-${seatingStatus.tone}`}
                                     disabled={isOrderActionInProgress}
                                     key={outdoorSpot.id}
                                     onClick={() => selectSeating(outdoorSpot.id)}
-                                    title={`${seatingStatus.label}: ${seatingStatus.detail}`}
+                                    title={`${displayName}: ${seatingStatus.label}: ${seatingStatus.detail}`}
                                     type="button"
                                 >
-                                    <span aria-hidden="true" className="seating-selector-name">Outdoor</span>
-                                    <strong aria-hidden="true">{outdoorSpot.name.replace('Outdoor ', '')}</strong>
+                                    {displayName === outdoorSpot.name ? <>
+                                        <span aria-hidden="true" className="seating-selector-name">Outdoor</span>
+                                        <strong aria-hidden="true">{outdoorSpot.name.replace('Outdoor ', '')}</strong>
+                                    </> : <span aria-hidden="true" className="seating-selector-name">{displayName}</span>}
                                     <span aria-hidden="true" className="seating-selector-status">{seatingStatus.label}</span>
                                     <span className="screen-reader-only" id={`seat-status-${outdoorSpot.id}`}>
                                         {seatingStatus.label}. {seatingStatus.detail}
@@ -867,13 +1550,239 @@ function TableManager({ isActive = true }: TableManagerProps) {
                         })}
                     </div>
                 </section>
+                <section aria-labelledby="committee-seating-heading" className="seating-zone seating-zone-committee">
+                    <header className="seating-zone-heading"><div><p className="eyebrow">Members</p><h2 id="committee-seating-heading">Committee</h2></div></header>
+                    <div className="committee-table-wrap">
+                        <table aria-label="Committee members" className="committee-table financial-table">
+                            <thead><tr>
+                                <th scope="col">Member</th><th scope="col">Items</th><th scope="col">Total</th><th scope="col">Discount (%)</th>
+                                {canManageCommitteeMembers && <th scope="col">Actions</th>}
+                            </tr></thead>
+                            <tbody>{committeeSpots.map((spot) => {
+                                const order = ordersBySeating[spot.id]
+                                const isSelected = selectedSeating?.id === spot.id
+                                const discount = spot.member?.fixedDiscountPercent !== null && spot.member?.fixedDiscountPercent !== undefined
+                                    ? String(spot.member.fixedDiscountPercent)
+                                    : committeeDiscountDrafts[spot.id] ?? String(order?.committeeDiscountPercent ?? 0)
+                                return <tr
+                                    aria-expanded={isSelected}
+                                    aria-controls={isSelected ? 'selected-order-panel' : undefined}
+                                    aria-selected={isSelected}
+                                    className={isSelected ? 'committee-row committee-row-selected' : 'committee-row'}
+                                    key={spot.id}
+                                    onClick={(event) => {
+                                        if (!isOrderActionInProgress && event.target instanceof Element && !event.target.closest('button, input, select, label')) {
+                                            if (isSelected) setSelectedSeatingId(null)
+                                            else selectSeating(spot.id)
+                                        }
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.target === event.currentTarget && !isOrderActionInProgress && (event.key === 'Enter' || event.key === ' ')) {
+                                            event.preventDefault()
+                                            if (isSelected) setSelectedSeatingId(null)
+                                            else selectSeating(spot.id)
+                                        }
+                                    }}
+                                    tabIndex={isOrderActionInProgress ? -1 : 0}
+                                >
+                                    <th scope="row">{spot.member?.name}</th>
+                                    <td>{order?.lines.reduce((count, line) => count + line.quantity, 0) ?? 0}</td>
+                                    <td>{currencyFormatter.format(order?.total ?? getOrderTotal(order?.lines ?? []))}</td>
+                                    <td><div className="committee-row-discount">
+                                        <input aria-label={`Discount for ${spot.member?.name} (%)`} disabled={isOrderActionInProgress || !isSelected || (hasJustPaid && isSelected) || spot.member?.fixedDiscountPercent !== null} inputMode="decimal" max="100" min="0" onChange={(event) => {
+                                            setCommitteeDiscountDrafts((current) => ({ ...current, [spot.id]: event.target.value }))
+                                            clearInvoice()
+                                        }} step="0.01" type="number" value={discount} />
+                                        <button aria-label={`Apply discount for ${spot.member?.name}`} disabled={isOrderActionInProgress || !isSelected || !isValidCommitteeDiscount || (hasJustPaid && isSelected)} onClick={applyCommitteeDiscount} type="button">Apply discount</button>
+                                    </div></td>
+                                    {canManageCommitteeMembers && <td><button aria-label={`Delete ${spot.member?.name}`} disabled={isOrderActionInProgress || spot.member?.protectedMember} onClick={() => setCommitteeMemberPendingDeletion(spot.member ?? null)} title={spot.member?.protectedMember ? 'Dinda cannot be deleted' : `Delete ${spot.member?.name}`} type="button">Delete member</button></td>}
+                                </tr>
+                            })}</tbody>
+                        </table>
+                        {!isLoading && committeeMembers.length === 0 && <p>No Committee members.</p>}
+                    </div>
+                    {canManageCommitteeMembers && <form className="committee-order-controls committee-member-form" noValidate onSubmit={addCommitteeMember}>
+                        <label htmlFor="new-committee-member">New committee member
+                            <input disabled={isOrderActionInProgress || isLoading} id="new-committee-member" maxLength={20} onChange={(event) => setNewCommitteeName(event.target.value)} value={newCommitteeName} />
+                        </label>
+                        <button disabled={isOrderActionInProgress || isLoading || newCommitteeName.trim() === ''} type="submit">Add member</button>
+                    </form>}
+                    {committeeMessage && <p className={`menu-message menu-message-${committeeMessage.tone}`} role={committeeMessage.tone === 'error' ? 'alert' : 'status'}>{committeeMessage.text}</p>}
+                </section>
                 {selectedSeating !== null && (
-                    <div className="table-order-area">
+                    <div className="table-order-area" id="selected-order-panel" ref={selectedOrderPanelRef}>
                         <section aria-labelledby="table-order-builder-heading" className="table-order-builder">
                             <header className="table-order-heading">
                                 <p className="eyebrow">Selected seating</p>
-                                <h2 id="table-order-builder-heading">{selectedSeating.name}</h2>
+                                <h2 id="table-order-builder-heading">{selectedSeatingName}</h2>
                             </header>
+
+                            {!hasJustPaid && !isCommitteeOrder && <div className="field-group table-name-field">
+                                <label htmlFor="order-table-name">Table name</label>
+                                <input disabled={isOrderActionInProgress} id="order-table-name" maxLength={100} onChange={(event) => {
+                                    setTableLabelDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: event.target.value }))
+                                    clearInvoice()
+                                }} placeholder={selectedSeating.name} value={tableLabel} />
+                                {selectedOrderLines.length > 0 && isTableLabelDirty && <button disabled={isOrderActionInProgress} onClick={saveTableLabel} type="button">Save table name</button>}
+                            </div>}
+
+                            {!hasJustPaid && !isCommitteeOrder && (
+                                <fieldset className="table-order-customer" disabled={isOrderActionInProgress}>
+                                    <legend>Customer details</legend>
+                                    <form className="customer-mobile-search" noValidate onSubmit={searchCustomerByPhone}>
+                                        <label htmlFor="table-customer-search-phone">Search by name or mobile</label>
+                                        <div>
+                                            <input
+                                                id="table-customer-search-phone"
+                                                onChange={(event) => {
+                                                    setCustomerSearchQuery(event.target.value)
+                                                    setCustomerSearchMessage(null)
+                                                    setCustomerSearchStatus('idle')
+                                                    setIsCreateContactOpen(false)
+                                                    setCustomerSearchMatches([])
+                                                }}
+                                                placeholder="Name or 10-digit mobile"
+                                                type="search"
+                                                value={customerSearchQuery}
+                                            />
+                                            <button disabled={isSearchingCustomer} type="submit">
+                                                {isSearchingCustomer ? 'Searching...' : 'Search'}
+                                            </button>
+                                        </div>
+                                    </form>
+                                    {customerSearchMessage && (
+                                        <p className="customer-search-message" role="status">{customerSearchMessage}</p>
+                                    )}
+                                    {customerSearchStatus === 'multiple' && customerSearchMatches.length > 0 && (
+                                        <div aria-label="Matching customers" className="customer-search-matches">
+                                            {customerSearchMatches.map((customer) => (
+                                                <button
+                                                    aria-label={`Use ${formatCustomerName(customer.name)}, ${customer.phoneNumber}`}
+                                                    key={customer.phoneNumber}
+                                                    onClick={() => selectCustomerProfile(customer)}
+                                                    type="button"
+                                                >
+                                                    <strong>{formatCustomerName(customer.name)}</strong>
+                                                    <span>{customer.phoneNumber}</span>
+                                                    {customer.dateOfBirth && <small>{customer.dateOfBirth}</small>}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {customerSearchStatus === 'not-found' && !isCreateContactOpen && (
+                                        <button
+                                            className="table-customer-create"
+                                            onClick={() => setIsCreateContactOpen(true)}
+                                            type="button"
+                                        >
+                                            Create new contact
+                                        </button>
+                                    )}
+                                    {isCreateContactOpen && (
+                                        <form className="table-customer-create-form" onSubmit={createCustomerContact}>
+                                            <div className="field-group table-order-customer-input">
+                                                <label htmlFor="new-contact-name">Name (optional)</label>
+                                                <input
+                                                    autoComplete="name"
+                                                    id="new-contact-name"
+                                                    maxLength={100}
+                                                    onChange={(event) => setNewContactName(event.target.value)}
+                                                    value={newContactName}
+                                                />
+                                            </div>
+                                            <div className="field-group table-order-customer-input">
+                                                <label htmlFor="new-contact-phone">Phone number (optional)</label>
+                                                <input
+                                                    autoComplete="tel"
+                                                    id="new-contact-phone"
+                                                    inputMode="tel"
+                                                    maxLength={32}
+                                                    onChange={(event) => setNewContactPhone(event.target.value)}
+                                                    type="tel"
+                                                    value={newContactPhone}
+                                                />
+                                            </div>
+                                            <div className="field-group table-order-customer-input">
+                                                <label htmlFor="new-contact-date-of-birth">Date of birth (optional)</label>
+                                                <input
+                                                    id="new-contact-date-of-birth"
+                                                    onChange={(event) => setNewContactDateOfBirth(event.target.value)}
+                                                    type="date"
+                                                    value={newContactDateOfBirth}
+                                                />
+                                            </div>
+                                            <div className="table-customer-create-actions">
+                                                <button disabled={isSavingNewContact} type="submit">
+                                                    {isSavingNewContact ? 'Saving contact...' : 'Save contact'}
+                                                </button>
+                                                <button disabled={isSavingNewContact} onClick={() => setIsCreateContactOpen(false)} type="button">
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </form>
+                                    )}
+
+                                    {(customerNameForSave || customerPhoneForSave || customerDateOfBirthForSave) && (
+                                        <div aria-label="Selected customer" className="customer-search-message" role="group">
+                                            {customerNameForSave && <p>{customerNameForSave}</p>}
+                                            {customerPhoneForSave && <p>{customerPhoneForSave}</p>}
+                                            {customerDateOfBirthForSave && <p>{customerDateOfBirthForSave}</p>}
+                                            <button
+                                                onClick={() => {
+                                                    setSelectedCustomerName('')
+                                                    setSelectedCustomerPhone('')
+                                                    setSelectedCustomerDateOfBirth('')
+                                                    setSelectedCustomerFieldEnabled('name', false)
+                                                    setSelectedCustomerFieldEnabled('phone', false)
+                                                    setSelectedCustomerFieldEnabled('dateOfBirth', false)
+                                                    setCustomerSearchQuery('')
+                                                    setCustomerSearchMatches([])
+                                                    setCustomerSearchStatus('idle')
+                                                    setCustomerSearchMessage(null)
+                                                    setIsCreateContactOpen(false)
+                                                    clearInvoice()
+                                                    setMessage(null)
+                                                }}
+                                                type="button"
+                                            >
+                                                Remove customer
+                                            </button>
+                                        </div>
+                                    )}
+                                    {selectedOrderLines.length > 0 && isCustomerDetailsDirty && (
+                                        <button
+                                            className="table-customer-save"
+                                            disabled={isOrderActionInProgress || hasInvalidCustomerDetails}
+                                            onClick={saveCustomerDetails}
+                                            type="button"
+                                        >
+                                            Save details
+                                        </button>
+                                    )}
+                                </fieldset>
+                            )}
+
+                            {!hasJustPaid && <div className="field-group table-order-description">
+                                <label htmlFor="order-description">Order description (optional)</label>
+                                <textarea
+                                    disabled={isOrderActionInProgress}
+                                    id="order-description"
+                                    maxLength={500}
+                                    onChange={(event) => {
+                                        setOrderDescriptionDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: event.target.value }))
+                                        clearInvoice()
+                                    }}
+                                    placeholder="Add preparation notes or other order details"
+                                    rows={3}
+                                    value={orderDescription}
+                                />
+                                {selectedOrderLines.length > 0 && isOrderDescriptionDirty && <button
+                                    className="table-customer-save"
+                                    disabled={isOrderActionInProgress}
+                                    onClick={saveOrderDescription}
+                                    type="button"
+                                >Save description</button>}
+                            </div>}
 
                             {isLoading && <p className="table-order-empty">Loading menu...</p>}
                             {!isLoading && menuItems.length === 0 && (
@@ -881,83 +1790,163 @@ function TableManager({ isActive = true }: TableManagerProps) {
                             )}
 
                             {!isLoading && menuItems.length > 0 && !isOrderCompleted && !hasJustPaid && (
-                                <form className="table-order-form" noValidate onSubmit={addMenuItemToOrder}>
+                                <form className="table-order-form" noValidate onSubmit={(event) => event.preventDefault()}>
                                     <div className="field-group">
                                         <label htmlFor="table-menu-item">Menu item</label>
-                                        <select
-                                            disabled={isOrderActionInProgress}
-                                            id="table-menu-item"
-                                            onChange={(event) => {
-                                                setSelectedMenuItemId(event.target.value)
-                                                setSelectedAddOnIds([])
+                                        <div
+                                            className="table-menu-picker"
+                                            onKeyDown={(event) => {
+                                                if (event.key === 'Escape') {
+                                                    event.preventDefault()
+                                                    menuPickerRef.current?.querySelector('input')?.focus()
+                                                    setIsMenuPickerOpen(false)
+                                                    setActiveMenuItemId(null)
+                                                    setMenuSearch('')
+                                                }
                                             }}
-                                            value={selectedMenuItemId}
+                                            ref={menuPickerRef}
                                         >
-                                            <option value="">Select a dish</option>
-                                            {groupedMenuItems.map(({ section, subsection, items }) => (
-                                                <optgroup
-                                                    key={`${section}-${subsection || 'items'}`}
-                                                    label={subsection ? `${section} / ${subsection}` : section}
-                                                >
-                                                    {items.map((menuItem) => (
-                                                        <option key={menuItem.id} value={menuItem.id}>
-                                                            {menuItem.name} - {currencyFormatter.format(getUnitPrice(menuItem))}
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    {selectedMenuItem && selectedMenuItem.addOns.length > 0 && (
-                                        <fieldset className="table-order-addons" disabled={isOrderActionInProgress}>
-                                            <legend>Add-ons for {selectedMenuItem.name}</legend>
-                                            <div className="table-order-addon-options">
-                                                {selectedMenuItem.addOns.map((addOn) => (
-                                                    <label key={addOn.id}>
-                                                        <input
-                                                            aria-label={`Add ${addOn.name}`}
-                                                            checked={selectedAddOnIds.includes(addOn.id)}
-                                                            onChange={(event) => setSelectedAddOnIds((currentIds) => event.target.checked
-                                                                ? [...currentIds, addOn.id]
-                                                                : currentIds.filter((id) => id !== addOn.id))}
-                                                            type="checkbox"
-                                                        />
-                                                        <span>{addOn.name}</span>
-                                                        <strong>+{currencyFormatter.format(addOn.price)}</strong>
-                                                    </label>
+                                            <input
+                                                aria-autocomplete="list"
+                                                aria-controls="table-menu-options"
+                                                aria-expanded={isMenuPickerOpen}
+                                                aria-haspopup="dialog"
+                                                autoComplete="off"
+                                                disabled={isOrderActionInProgress}
+                                                id="table-menu-item"
+                                                onChange={(event) => {
+                                                    setMenuSearch(event.target.value)
+                                                    setActiveMenuItemId(null)
+                                                    setIsMenuPickerOpen(true)
+                                                }}
+                                                onClick={() => setIsMenuPickerOpen(true)}
+                                                onFocus={() => {
+                                                    setMenuSearch('')
+                                                    setIsMenuPickerOpen(true)
+                                                }}
+                                                onKeyDown={(event) => {
+                                                    const options = groupedMenuItems.flatMap((group) => group.items)
+                                                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                                        event.preventDefault()
+                                                        setIsMenuPickerOpen(true)
+                                                        if (options.length === 0) return
+                                                        const currentIndex = options.findIndex((item) => item.id === activeMenuItemId)
+                                                        const nextIndex = currentIndex === -1
+                                                            ? event.key === 'ArrowDown' ? 0 : options.length - 1
+                                                            : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+                                                        const nextItem = options[nextIndex]
+                                                        setActiveMenuItemId(nextItem.id)
+                                                        menuPickerRef.current?.querySelector<HTMLElement>(`#table-menu-option-${nextItem.id}`)?.scrollIntoView?.({ block: 'nearest' })
+                                                        menuPickerRef.current?.querySelector<HTMLInputElement>(`#table-menu-option-${nextItem.id} input[type='checkbox']`)?.focus()
+                                                    } else if (event.key === 'Enter') {
+                                                        event.preventDefault()
+                                                        if (!isMenuPickerOpen) return
+                                                        const item = options.find((option) => option.id === activeMenuItemId)
+                                                            ?? (options.length === 1 ? options[0] : undefined)
+                                                        if (item) toggleMenuItem(item, !selectedOrderLines.some((line) => line.menuItemId === item.id))
+                                                    } else if (event.key === 'Escape') {
+                                                        event.preventDefault()
+                                                        setIsMenuPickerOpen(false)
+                                                        setActiveMenuItemId(null)
+                                                        setMenuSearch('')
+                                                    }
+                                                }}
+                                                placeholder="Select or search a dish"
+                                                role="combobox"
+                                                value={isMenuPickerOpen ? menuSearch : selectedOrderLines.length > 0 ? `${selectedOrderLines.length} selected` : menuSearch}
+                                            />
+                                            <button
+                                                aria-label="Show menu items"
+                                                className="table-menu-toggle"
+                                                disabled={isOrderActionInProgress}
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onClick={() => {
+                                                    const shouldOpen = !isMenuPickerOpen
+                                                    menuPickerRef.current?.querySelector('input')?.focus()
+                                                    setMenuSearch('')
+                                                    setIsMenuPickerOpen(shouldOpen)
+                                                }}
+                                                tabIndex={-1}
+                                                type="button"
+                                            ><span aria-hidden="true">&#9662;</span></button>
+                                            <div aria-label="Menu items" className="table-menu-options" hidden={!isMenuPickerOpen} id="table-menu-options" role="dialog">
+                                                {groupedMenuItems.map(({ section, subsection, items }) => (
+                                                    <div aria-label={subsection ? `${section} / ${subsection}` : section} key={`${section}-${subsection || 'items'}`} role="group">
+                                                        <div className="table-menu-option-heading">{subsection ? `${section} / ${subsection}` : section}</div>
+                                                        {items.map((menuItem) => {
+                                                            const line = selectedOrderLines.find((item) => item.menuItemId === menuItem.id)
+                                                            return <div
+                                                                className={activeMenuItemId === menuItem.id ? 'table-menu-check-row table-menu-option-active' : 'table-menu-check-row'}
+                                                                id={`table-menu-option-${menuItem.id}`}
+                                                                key={menuItem.id}
+                                                                onMouseDown={(event) => {
+                                                                    if (event.target instanceof Element && !event.target.closest('input, button, select, textarea')) {
+                                                                        event.preventDefault()
+                                                                    }
+                                                                }}
+                                                                onClick={(event) => {
+                                                                    if (event.target instanceof Element && !event.target.closest('label, input, button, fieldset, .table-quantity-control')) {
+                                                                        toggleMenuItem(menuItem, line === undefined)
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <div className="table-menu-check-main">
+                                                                    <label>
+                                                                        <input
+                                                                            aria-label={`Select ${menuItem.name}`}
+                                                                            checked={line !== undefined}
+                                                                            disabled={isOrderActionInProgress}
+                                                                            onChange={(event) => toggleMenuItem(menuItem, event.target.checked)}
+                                                                            onKeyDown={(event) => {
+                                                                                if (event.key === 'Enter') {
+                                                                                    event.preventDefault()
+                                                                                    toggleMenuItem(menuItem, line === undefined)
+                                                                                }
+                                                                            }}
+                                                                            type="checkbox"
+                                                                        />
+                                                                        <span>{menuItem.name}<small>{currencyFormatter.format(getUnitPrice(menuItem))}</small></span>
+                                                                    </label>
+                                                                    {line && <div aria-label={`Quantity for ${menuItem.name}`} className="table-quantity-control" role="group">
+                                                                        <button aria-label={`Decrease selected ${menuItem.name} quantity`} className="table-quantity-step" disabled={isOrderActionInProgress || line.quantity <= 1} onClick={() => adjustOrderLineQuantity(line, -1)} type="button">-</button>
+                                                                        <output>{line.quantity}</output>
+                                                                        <button aria-label={`Increase selected ${menuItem.name} quantity`} className="table-quantity-step" disabled={isOrderActionInProgress || line.quantity >= 10_000} onClick={() => adjustOrderLineQuantity(line, 1)} type="button">+</button>
+                                                                    </div>}
+                                                                </div>
+                                                                {line && menuItem.addOns.length > 0 && <div className="table-menu-addons-dropdown">
+                                                                    <button
+                                                                        aria-expanded={expandedAddOnMenuItemId === menuItem.id}
+                                                                        aria-label={`Add-ons for ${menuItem.name}`}
+                                                                        className="table-menu-addons-toggle"
+                                                                        disabled={isOrderActionInProgress}
+                                                                        onClick={() => toggleAddOnDropdown(menuItem)}
+                                                                        type="button"
+                                                                    >
+                                                                        {expandedAddOnMenuItemId === menuItem.id ? 'Hide add-ons' : `Add-ons (${menuItem.addOns.length})`}
+                                                                        <span aria-hidden="true">{expandedAddOnMenuItemId === menuItem.id ? '−' : '+'}</span>
+                                                                    </button>
+                                                                    {expandedAddOnMenuItemId === menuItem.id && <fieldset className="table-menu-inline-addons" disabled={isOrderActionInProgress}>
+                                                                        <legend>Add-ons for {menuItem.name}</legend>
+                                                                        {menuItem.addOns.map((addOn) => <label key={addOn.id}>
+                                                                            <input aria-label={`Add ${addOn.name}`} checked={line.addOns.some((item) => item.id === addOn.id)} onChange={(event) => toggleOrderAddOn(menuItem, line, addOn, event.target.checked)} type="checkbox" />
+                                                                            <span>{addOn.name} (+{currencyFormatter.format(addOn.price)})</span>
+                                                                        </label>)}
+                                                                    </fieldset>}
+                                                                </div>}
+                                                            </div>
+                                                        })}
+                                                    </div>
                                                 ))}
+                                                {matchingMenuItems.length === 0 && <p role="status">No matching menu items.</p>}
                                             </div>
-                                        </fieldset>
-                                    )}
-
-                                    <div className="field-group table-order-quantity">
-                                        <label htmlFor="table-order-quantity">Quantity</label>
-                                        <input
-                                            disabled={isOrderActionInProgress}
-                                            id="table-order-quantity"
-                                            inputMode="numeric"
-                                            min="1"
-                                            onChange={(event) => setQuantity(event.target.value)}
-                                            step="1"
-                                            type="number"
-                                            value={quantity}
-                                        />
+                                        </div>
                                     </div>
-
-                                    {draftLineTotal !== null && (
-                                        <p className="table-order-price-preview">
-                                            Line price: <strong>{currencyFormatter.format(draftLineTotal)}</strong>
-                                        </p>
-                                    )}
 
                                     <div className="table-order-actions">
-                                        <button className="table-order-add" disabled={isOrderActionInProgress} type="submit">
-                                            {isOrderSaving ? 'Saving order...' : `Add to ${selectedSeating.name}`}
-                                        </button>
+                                        {isOrderSaving && <p role="status">Saving order...</p>}
                                         <button
                                             className="table-order-complete"
-                                            disabled={isOrderActionInProgress || selectedOrderLines.length === 0}
+                                            disabled={isOrderActionInProgress || selectedOrderLines.length === 0 || hasFailedOrderSave}
                                             onClick={() => void completeOrder()}
                                             type="button"
                                         >
@@ -968,11 +1957,18 @@ function TableManager({ isActive = true }: TableManagerProps) {
                             )}
 
                             {isOrderCompleted && (
-                                <section aria-label={`Completed ${selectedSeating.name} order`} className="completed-order-panel">
+                                <section aria-label={`Completed ${selectedSeatingName} order`} className="completed-order-panel">
                                     <p>Final price</p>
                                     <strong>{currencyFormatter.format(selectedOrderTotal)}</strong>
                                     <div className="completed-order-actions">
-                                        <button className="invoice-create" onClick={createInvoice} type="button">Create invoice</button>
+                                        <button
+                                            className="invoice-create"
+                                            disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
+                                            onClick={createInvoice}
+                                            type="button"
+                                        >
+                                            Create invoice
+                                        </button>
                                         <button className="table-open" disabled={isOrderActionInProgress} onClick={() => void openTable()} type="button">
                                             Open table
                                         </button>
@@ -982,10 +1978,39 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                         <section aria-labelledby="invoice-preview-heading" className="invoice-preview">
                                             <header className="invoice-preview-heading">
                                                 <h3 id="invoice-preview-heading">Invoice preview</h3>
-                                                <a className="invoice-download" download={getInvoiceFileName(selectedSeating.name)} href={invoiceUrl}>
-                                                    Download invoice
-                                                </a>
+                                                <div className="invoice-preview-actions">
+                                                    <a className="invoice-download" download={getInvoiceFileName(selectedSeatingName)} href={invoiceUrl}>
+                                                        Download invoice
+                                                    </a>
+                                                    {!selectedOpenOrder?.customerPhone && (
+                                                        <label className="invoice-whatsapp-number" htmlFor="invoice-whatsapp-number">
+                                                            <span>WhatsApp number</span>
+                                                            <input
+                                                                autoComplete="tel"
+                                                                id="invoice-whatsapp-number"
+                                                                inputMode="tel"
+                                                                onChange={(event) => setInvoiceWhatsAppPhone(event.target.value)}
+                                                                placeholder="98765 43210"
+                                                                type="tel"
+                                                                value={invoiceWhatsAppPhone}
+                                                            />
+                                                        </label>
+                                                    )}
+                                                    <button
+                                                        aria-describedby="invoice-whatsapp-help"
+                                                        className="invoice-whatsapp-button"
+                                                        disabled={!selectedOpenOrder?.customerPhone
+                                                            && normalizeCustomerPhoneNumber(invoiceWhatsAppPhone) === null}
+                                                        onClick={openInvoiceInWhatsApp}
+                                                        type="button"
+                                                    >
+                                                        Send in WhatsApp
+                                                    </button>
+                                                </div>
                                             </header>
+                                            <p id="invoice-whatsapp-help" className="invoice-whatsapp-help">
+                                                WhatsApp opens with the invoice details. Attach the downloaded PDF and tap Send.
+                                            </p>
                                             <iframe src={invoiceUrl} title="Invoice preview" />
                                         </section>
                                     )}
@@ -1017,14 +2042,23 @@ function TableManager({ isActive = true }: TableManagerProps) {
                             <header className="table-order-summary-heading">
                                 <div>
                                     <p className="eyebrow">Current order</p>
-                                    <h2 id="table-order-summary-heading">{selectedSeating.name} order</h2>
+                                    <h2 id="table-order-summary-heading">{selectedSeatingName} order</h2>
                                 </div>
                                 <span>{selectedOrderLines.length} {selectedOrderLines.length === 1 ? 'item' : 'items'}</span>
                             </header>
 
+                            {selectedOrderLines.length > 0 && (
+                                <p className="table-order-customer-label">
+                                    Ordering name: <strong>{formatCustomerName(customerNameForSave)}</strong>
+                                </p>
+                            )}
+                            {selectedOpenOrder?.orderDescription && <p className="table-order-description-summary">
+                                <strong>Description:</strong> {selectedOpenOrder.orderDescription}
+                            </p>}
+
                             {selectedOrderLines.length === 0 ? (
                                 <>
-                                    <p className="table-order-empty">No items selected for {selectedSeating.name}.</p>
+                                    <p className="table-order-empty">No items selected for {selectedSeatingName}.</p>
                                     {hasJustPaid && (
                                         <button className="table-restart" onClick={restartTable} type="button">Restart table</button>
                                     )}
@@ -1039,6 +2073,10 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                             </header>
                                             <p>
                                                 {getPaymentMethodLabel(lastPaidOrder.paymentMethod)} payment recorded {formatDateTime(lastPaidOrder.paidAt)}.
+                                            </p>
+                                            {lastPaidOrder.paymentMethod === 'SPLIT' && <p>Cash: {currencyFormatter.format(lastPaidOrder.cashAmount ?? 0)} · Online: {currencyFormatter.format(lastPaidOrder.onlineAmount ?? 0)}</p>}
+                                            <p className="table-order-customer-label">
+                                                Ordering name: <strong>{formatCustomerName(lastPaidOrder.customerName)}</strong>
                                             </p>
                                             <button className="invoice-create" onClick={createPaidReceipt} type="button">
                                                 {paidReceiptUrl ? 'Refresh paid receipt' : 'Create paid receipt'}
@@ -1071,7 +2109,7 @@ function TableManager({ isActive = true }: TableManagerProps) {
                             ) : (
                                 <>
                                     <div className="table-order-table-wrap">
-                                        <table aria-label={`Order for ${selectedSeating.name}`} className="table-order-table">
+                                        <table aria-label={`Order for ${selectedSeatingName}`} className="table-order-table">
                                             <thead>
                                                 <tr>
                                                     <th scope="col">Item</th>
@@ -1082,41 +2120,81 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {selectedOrderLines.map((orderLine) => (
-                                                    <tr key={getOrderLineKey(orderLine)}>
-                                                        <td>{getOrderLineDisplayName(orderLine)}</td>
-                                                        <td>{orderLine.quantity}</td>
-                                                        <td>{currencyFormatter.format(orderLine.unitPrice)}</td>
-                                                        <td>{currencyFormatter.format(getLineTotal(orderLine))}</td>
-                                                        <td>
-                                                            <button
-                                                                aria-label={`Remove ${getOrderLineDisplayName(orderLine)} from ${selectedSeating.name}`}
-                                                                className="table-order-remove"
-                                                                disabled={isOrderActionInProgress}
-                                                                onClick={() => removeOrderLine(orderLine)}
-                                                                type="button"
-                                                            >
-                                                                Remove
-                                                            </button>
-                                                        </td>
-                                                    </tr>
+                                                {orderLineGroups.map((group) => (
+                                                    <Fragment key={group.section}>
+                                                        {!isCommitteeOrder && <tr className="table-order-section-row">
+                                                            <th colSpan={5} scope="rowgroup">
+                                                                {group.section}{group.section === 'Others' ? ' (no bill discount)' : ''}
+                                                            </th>
+                                                        </tr>}
+                                                        {group.lines.map((orderLine) => (
+                                                            <tr key={getOrderLineKey(orderLine)}>
+                                                                <td>{getOrderLineDisplayName(orderLine)}</td>
+                                                                <td>
+                                                                    <div
+                                                                        aria-label={`Quantity for ${getOrderLineDisplayName(orderLine)}`}
+                                                                        className="table-quantity-control"
+                                                                        role="group"
+                                                                    >
+                                                                        <button
+                                                                            aria-label={`Decrease ${getOrderLineDisplayName(orderLine)} quantity`}
+                                                                            className="table-quantity-step"
+                                                                            disabled={isOrderActionInProgress || orderLine.quantity <= 1}
+                                                                            onClick={() => adjustOrderLineQuantity(orderLine, -1)}
+                                                                            type="button"
+                                                                        >
+                                                                            -
+                                                                        </button>
+                                                                        <output>{orderLine.quantity}</output>
+                                                                        <button
+                                                                            aria-label={`Increase ${getOrderLineDisplayName(orderLine)} quantity`}
+                                                                            className="table-quantity-step"
+                                                                            disabled={isOrderActionInProgress}
+                                                                            onClick={() => adjustOrderLineQuantity(orderLine, 1)}
+                                                                            type="button"
+                                                                        >
+                                                                            +
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                                <td>{currencyFormatter.format(orderLine.unitPrice)}</td>
+                                                                <td>{currencyFormatter.format(getLineTotal(orderLine))}</td>
+                                                                <td>
+                                                                    <button
+                                                                        aria-label={`Remove ${getOrderLineDisplayName(orderLine)} from ${selectedSeatingName}`}
+                                                                        className="table-order-remove"
+                                                                        disabled={isOrderActionInProgress}
+                                                                        onClick={() => removeOrderLine(orderLine)}
+                                                                        type="button"
+                                                                    >
+                                                                        Remove
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                        {!isCommitteeOrder && <tr className="table-order-section-subtotal-row">
+                                                            <th colSpan={3} scope="row">
+                                                                {group.section === 'General' ? 'General total' : 'Others total'}
+                                                            </th>
+                                                            <td>{currencyFormatter.format(group.section === 'General' ? generalSubtotal : othersSubtotal)}</td>
+                                                            <td></td>
+                                                        </tr>}
+                                                    </Fragment>
                                                 ))}
                                             </tbody>
                                             <tfoot>
                                                 <tr>
-                                                    <th colSpan={3} scope="row">Subtotal</th>
+                                                    <th colSpan={3} scope="row">{isCommitteeOrder ? 'Total price' : 'Combined subtotal'}</th>
                                                     <td>{currencyFormatter.format(selectedOrderSubtotal)}</td>
                                                     <td></td>
                                                 </tr>
-                                                {selectedDiscountAmount > 0 && (
-                                                    <tr>
-                                                        <th colSpan={3} scope="row">Bill discount ({selectedDiscountPercent.toFixed(2)}%)</th>
-                                                        <td>-{currencyFormatter.format(selectedDiscountAmount)}</td>
-                                                        <td></td>
-                                                    </tr>
-                                                )}
                                                 <tr>
-                                                    <th colSpan={3} scope="row">Final bill</th>
+                                                    <th colSpan={3} scope="row">{isCommitteeOrder ? 'Discount' : `Bill discount (${selectedDiscountPercent.toFixed(2)}% of General)`}</th>
+                                                    <td>-{currencyFormatter.format(selectedDiscountAmount)}</td>
+                                                    <td></td>
+                                                </tr>
+                                                <tr>
+                                                    <th colSpan={3} scope="row">{isCommitteeOrder ? 'Final price' : 'Final bill'}</th>
                                                     <td>{currencyFormatter.format(selectedOrderTotal)}</td>
                                                     <td></td>
                                                 </tr>
@@ -1127,49 +2205,96 @@ function TableManager({ isActive = true }: TableManagerProps) {
                                     {isOrderCompleted && (
                                         <div className="table-payment-actions">
                                             <p>Settle this order</p>
+                                            <label className="table-split-toggle">
+                                                <input checked={isSplitPayment} disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails} onChange={(event) => {
+                                                    setIsSplitPayment(event.target.checked)
+                                                    setSplitCashAmount('')
+                                                    setSplitOnlineAmount('')
+                                                    setUpiQrSeatingId(null)
+                                                    setUpiQrProvider('primary')
+                                                    setMessage(null)
+                                                }} type="checkbox" />
+                                                Split payment
+                                            </label>
+                                            {isSplitPayment && <fieldset className="table-split-fields" disabled={isOrderActionInProgress}>
+                                                <legend>Cash + Online</legend>
+                                                <label htmlFor="split-cash-amount">Cash amount (INR)
+                                                    <input id="split-cash-amount" inputMode="decimal" min="0.01" onChange={(event) => setSplitCashAmount(event.target.value)} step="0.01" type="number" value={splitCashAmount} />
+                                                </label>
+                                                <label htmlFor="split-online-amount">Online amount (INR)
+                                                    <input id="split-online-amount" inputMode="decimal" min="0.01" onChange={(event) => setSplitOnlineAmount(event.target.value)} step="0.01" type="number" value={splitOnlineAmount} />
+                                                </label>
+                                                {(splitCashAmount !== '' || splitOnlineAmount !== '') && !isValidSplit && <p className="table-split-validation" role="alert">Cash and online amounts must be positive and add up to {currencyFormatter.format(selectedOrderTotal)}.</p>}
+                                            </fieldset>}
                                             <div className="table-payment-buttons">
-                                                {upiVpa.trim() !== '' && (
+                                                {!isSplitPayment && upiVpa.trim() !== '' && (
                                                     <button
                                                         className="table-payment-upi"
-                                                        disabled={isOrderActionInProgress}
-                                                        onClick={() => setUpiQrSeatingId((currentId) => (
-                                                            currentId === selectedSeating.id ? null : selectedSeating.id
-                                                        ))}
+                                                        disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
+                                                        onClick={() => {
+                                                            const isQrVisible = upiQrSeatingId === selectedSeating.id
+                                                            setUpiQrSeatingId(isQrVisible ? null : selectedSeating.id)
+                                                            setUpiQrProvider('primary')
+                                                        }}
                                                         type="button"
                                                     >
                                                         {upiQrSeatingId === selectedSeating.id ? 'Hide UPI QR' : 'Show UPI QR'}
                                                     </button>
                                                 )}
-                                                <button
+                                                {!isSplitPayment && <button
                                                     className="table-payment-cash"
-                                                    disabled={isOrderActionInProgress}
+                                                    disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
                                                     onClick={() => requestPayment('CASH')}
                                                     type="button"
                                                 >
                                                     {paymentMethodInProgress === 'CASH' ? 'Recording cash payment...' : 'Paid by cash'}
-                                                </button>
-                                                <button
+                                                </button>}
+                                                {!isSplitPayment && <button
                                                     className="table-payment-online"
-                                                    disabled={isOrderActionInProgress}
+                                                    disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
                                                     onClick={() => requestPayment('ONLINE')}
                                                     type="button"
                                                 >
                                                     {paymentMethodInProgress === 'ONLINE' ? 'Recording online payment...' : 'Paid online'}
-                                                </button>
+                                                </button>}
+                                                {isSplitPayment && <button className="table-payment-online" disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails || !isValidSplit} onClick={() => requestPayment('SPLIT')} type="button">
+                                                    {paymentMethodInProgress === 'SPLIT' ? 'Recording split payment...' : 'Record split payment'}
+                                                </button>}
                                             </div>
-                                            {upiVpa.trim() !== '' && upiQrSeatingId === selectedSeating.id && (
+                                            {selectedUpiVpa.trim() !== '' && (isSplitPayment ? isValidSplit : upiQrSeatingId === selectedSeating.id) && (
                                                 <section aria-labelledby="table-upi-qr-heading" className="table-upi-qr">
                                                     <QRCodeSVG
                                                         includeMargin
                                                         size={208}
                                                         title="UPI payment QR"
-                                                        value={createUpiPaymentUri(selectedOrderTotal, selectedSeating.name, restaurantName, upiVpa)}
+                                                        value={createUpiPaymentUri(qrPaymentAmount, selectedSeatingName, restaurantName, selectedUpiVpa)}
                                                     />
                                                     <div>
                                                         <p className="eyebrow">UPI payment</p>
-                                                        <h3 id="table-upi-qr-heading">Scan to pay {currencyFormatter.format(selectedOrderTotal)}</h3>
-                                                        <p>Pay to {upiVpa}</p>
-                                                        <p>After the payer confirms in their UPI app, select “Paid online” to record payment.</p>
+                                                        <h3 id="table-upi-qr-heading">Scan to pay {currencyFormatter.format(qrPaymentAmount)}</h3>
+                                                        <p>Pay to {selectedUpiVpa}</p>
+                                                        {secondaryUpiVpa.trim() !== '' && <fieldset className="table-upi-account-choice">
+                                                            <legend>QR account</legend>
+                                                            <label>
+                                                                <input
+                                                                    checked={upiQrProvider === 'primary'}
+                                                                    name="upi-qr-provider"
+                                                                    onChange={() => setUpiQrProvider('primary')}
+                                                                    type="radio"
+                                                                />
+                                                                Primary
+                                                            </label>
+                                                            <label>
+                                                                <input
+                                                                    checked={upiQrProvider === 'secondary'}
+                                                                    name="upi-qr-provider"
+                                                                    onChange={() => setUpiQrProvider('secondary')}
+                                                                    type="radio"
+                                                                />
+                                                                Show secondary
+                                                            </label>
+                                                        </fieldset>}
+                                                        {!isSplitPayment && <p>After the payer confirms in their UPI app, select “Paid online” to record payment.</p>}
                                                     </div>
                                                 </section>
                                             )}
@@ -1182,16 +2307,27 @@ function TableManager({ isActive = true }: TableManagerProps) {
                 )}
             </section>
 
+            {committeeMemberPendingDeletion && <ConfirmationDialog
+                title={`Delete ${committeeMemberPendingDeletion.name}?`}
+                message="Remove this member from the active Committee list? Paid order history will be kept."
+                confirmLabel="Delete member"
+                isConfirming={isSavingCommitteeMember}
+                onCancel={() => setCommitteeMemberPendingDeletion(null)}
+                onConfirm={() => void deleteCommitteeMember()}
+                tone="danger"
+            />}
+
             {pendingPaymentMethod && selectedSeating && (
                 <ConfirmationDialog
                     confirmLabel={`Confirm ${getPaymentMethodLabel(pendingPaymentMethod).toLowerCase()} payment`}
                     isConfirming={paymentMethodInProgress !== null}
-                    message={`Record a ${getPaymentMethodLabel(pendingPaymentMethod).toLowerCase()} payment for ${selectedSeating.name}? This will settle the completed order.`}
+                    message={`Record a ${getPaymentMethodLabel(pendingPaymentMethod).toLowerCase()} payment for ${selectedSeatingName}? This will settle the completed order.`}
                     onCancel={() => setPendingPaymentMethod(null)}
                     onConfirm={() => void settleOrder(pendingPaymentMethod)}
                     title="Confirm payment"
                 >
                     <strong>{currencyFormatter.format(selectedOrderTotal)}</strong>
+                    {pendingPaymentMethod === 'SPLIT' && <p>Cash: {currencyFormatter.format((splitCashPaise ?? 0) / 100)} · Online: {currencyFormatter.format((splitOnlinePaise ?? 0) / 100)}</p>}
                 </ConfirmationDialog>
             )}
         </div>

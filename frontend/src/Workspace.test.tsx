@@ -26,12 +26,13 @@ function mockBusinessDayStatus(active: boolean) {
 
 vi.mock('./BalanceSheetManager', () => ({ default: () => <p>Balance sheet content</p> }))
 vi.mock('./BackupManager', () => ({ default: () => <p>Backup content</p> }))
+vi.mock('./CustomerDetailsManager', () => ({ default: () => <p>Customer directory content</p> }))
 vi.mock('./DailyClosingManager', () => ({
     default: ({ onBusinessDayStatusChange }: {
         onBusinessDayStatusChange: (status: { active: boolean; startedAt: string | null; businessDate: string | null }) => void
     }) => (
         <div>
-            <p>Daily close content</p>
+            <p>Daily start/close content</p>
             <button onClick={() => onBusinessDayStatusChange({
                 active: true,
                 businessDate: '2026-09-15',
@@ -43,7 +44,7 @@ vi.mock('./DailyClosingManager', () => ({
     ),
 }))
 vi.mock('./ExpensesManager', () => ({ default: () => <p>Expenses content</p> }))
-vi.mock('./ProfitFactManager', () => ({ default: () => <p>Profit Fact content</p> }))
+vi.mock('./ProfitFactManager', () => ({ default: () => <p>Revenue content</p> }))
 vi.mock('./HistoryManager', () => ({ default: () => <p>History content</p> }))
 vi.mock('./DetailsManager', () => ({ default: () => <p>Details content</p> }))
 vi.mock('./TableManager', () => ({ default: () => <p>Table content</p> }))
@@ -75,15 +76,35 @@ describe('Workspace', () => {
         expect(tableTab).toHaveAttribute('tabindex', '-1')
         expect(screen.getByText('Details content')).toBeInTheDocument()
 
-        await user.click(screen.getByRole('tab', { name: 'Profit Fact' }))
-        expect(screen.getByText('Profit Fact content')).toBeInTheDocument()
+        await user.click(screen.getByRole('tab', { name: 'Revenue' }))
+        expect(screen.getByText('Revenue content')).toBeInTheDocument()
+
+        await user.click(screen.getByRole('tab', { name: 'Customer details' }))
+        expect(screen.getByText('Customer directory content')).toBeInTheDocument()
 
         await user.keyboard('{End}')
 
-        const backupTab = screen.getByRole('tab', { name: 'Backup' })
-        expect(backupTab).toHaveFocus()
-        expect(backupTab).toHaveAttribute('aria-selected', 'true')
-        expect(screen.getByText('Backup content')).toBeInTheDocument()
+        const customerDetailsTab = screen.getByRole('tab', { name: 'Customer details' })
+        expect(customerDetailsTab).toHaveFocus()
+        expect(customerDetailsTab).toHaveAttribute('aria-selected', 'true')
+        expect(screen.getByText('Customer directory content')).toBeInTheDocument()
+    })
+
+    it('rotates through the existing and newly supplied workspace images', () => {
+        mockBusinessDayStatus(true)
+
+        render(<Workspace isLoggingOut={false} mode="ADMIN" onLogout={async () => { }} username="owner" />)
+
+        const imageSources = Array.from(document.querySelectorAll<HTMLImageElement>('.workspace-banner .banner-slide'))
+            .map((image) => image.getAttribute('src'))
+        const bannerImages = Array.from(document.querySelectorAll<HTMLImageElement>('.workspace-banner .banner-slide'))
+        expect(imageSources).toHaveLength(9)
+        expect(document.querySelectorAll('.workspace-banner .banner-slide-backdrop')).toHaveLength(9)
+        expect(bannerImages.every((image) => image.style.objectFit === 'contain')).toBe(true)
+        expect(imageSources).toContain('/players/Lion_quote_2.webp')
+        expect(imageSources).toContain('/players/Sachin.jpg')
+        expect(imageSources).toContain('/players/netaji.jpeg')
+        expect(imageSources).toContain('/players/manchester-united.png')
     })
 
     it('limits Captain navigation to table, menu, and history', () => {
@@ -93,14 +114,15 @@ describe('Workspace', () => {
         expect(screen.getByRole('tab', { name: 'Table' })).toBeDisabled()
         expect(screen.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
         expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Customer details' })).not.toBeInTheDocument()
         expect(screen.queryByRole('tab', { name: 'Expenses' })).not.toBeInTheDocument()
-        expect(screen.queryByRole('tab', { name: 'Daily close' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Daily start/close' })).not.toBeInTheDocument()
         expect(screen.queryByRole('tab', { name: 'Balance sheet' })).not.toBeInTheDocument()
-        expect(screen.queryByRole('tab', { name: 'Profit Fact' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('tab', { name: 'Revenue by section' })).not.toBeInTheDocument()
         expect(screen.queryByRole('tab', { name: 'Backup' })).not.toBeInTheDocument()
     })
 
-    it('keeps Table disabled and opens Daily close until the Admin starts a day', async () => {
+    it('keeps Table disabled and opens Daily start/close until the Admin starts a day', async () => {
         const user = userEvent.setup()
         mockBusinessDayStatus(false)
 
@@ -108,8 +130,8 @@ describe('Workspace', () => {
 
         const tableTab = await screen.findByRole('tab', { name: 'Table' })
         expect(tableTab).toBeDisabled()
-        expect(screen.getByRole('tab', { name: 'Daily close' })).toHaveAttribute('aria-selected', 'true')
-        expect(screen.getByText('Daily close content')).toBeInTheDocument()
+        expect(screen.getByRole('tab', { name: 'Daily start/close' })).toHaveAttribute('aria-selected', 'true')
+        expect(screen.getByText('Daily start/close content')).toBeInTheDocument()
 
         await user.click(screen.getByRole('button', { name: 'Start day' }))
         expect(tableTab).toBeEnabled()

@@ -1,4 +1,4 @@
-export type PaymentMethod = 'CASH' | 'ONLINE'
+export type PaymentMethod = 'CASH' | 'ONLINE' | 'SPLIT'
 
 export type RefundType = 'VOID' | 'REFUND'
 
@@ -24,7 +24,12 @@ export type PaidOrder = {
     id: number
     billNumber: string
     tableName: string
+    tableLabel?: string | null
+    orderDescription?: string | null
+    customerName?: string | null
     paymentMethod: PaymentMethod
+    cashAmount?: number
+    onlineAmount?: number
     paidAt: string
     subtotal?: number
     discountPercent?: number
@@ -37,6 +42,7 @@ export type PaidOrder = {
 export type OpenOrderLine = {
     menuItemId: number
     itemName: string
+    section?: string
     quantity: number
     unitPrice: number
     lineTotal: number
@@ -51,12 +57,24 @@ export type OpenOrderAddOn = {
 
 export type OpenOrder = {
     tableName: string
+    tableLabel?: string | null
+    orderDescription?: string | null
+    committeeDiscountPercent?: number | null
+    customerName?: string | null
+    customerPhone?: string | null
+    customerDateOfBirth?: string | null
     subtotal?: number
     discountPercent?: number
     discountAmount?: number
     total: number
     completed: boolean
     lines: OpenOrderLine[]
+}
+
+export type CustomerDetails = {
+    name: string | null
+    phoneNumber: string
+    dateOfBirth: string | null
 }
 
 export type Expense = {
@@ -113,6 +131,10 @@ export type BusinessDayStatus = {
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 export const INDIA_TIME_ZONE = 'Asia/Kolkata'
 
+export function getTableDisplayName(order: { tableName: string; tableLabel?: string | null }) {
+    return order.tableLabel?.trim() || order.tableName.replace(/^Committee (.+)$/, '$1')
+}
+
 export const currencyFormatter = new Intl.NumberFormat('en-IN', {
     currency: 'INR',
     maximumFractionDigits: 2,
@@ -149,7 +171,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isPaymentMethod(value: unknown): value is PaymentMethod {
-    return value === 'CASH' || value === 'ONLINE'
+    return value === 'CASH' || value === 'ONLINE' || value === 'SPLIT'
+}
+
+export function parsePaymentAmountInPaise(value: string): number | null {
+    if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(value.trim())) return null
+    const [whole, fraction = ''] = value.trim().split('.')
+    return Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
 }
 
 function isRefundType(value: unknown): value is RefundType {
@@ -179,6 +207,7 @@ function isOpenOrderLine(value: unknown): value is OpenOrderLine {
     return isRecord(value)
         && typeof value.menuItemId === 'number'
         && typeof value.itemName === 'string'
+        && (!('section' in value) || typeof value.section === 'string')
         && typeof value.quantity === 'number'
         && typeof value.unitPrice === 'number'
         && typeof value.lineTotal === 'number'
@@ -193,12 +222,20 @@ export function isPaidOrder(value: unknown): value is PaidOrder {
         && typeof value.id === 'number'
         && typeof value.billNumber === 'string'
         && typeof value.tableName === 'string'
+        && (!('tableLabel' in value) || value.tableLabel === null || typeof value.tableLabel === 'string')
+        && (!('orderDescription' in value) || value.orderDescription === null || typeof value.orderDescription === 'string')
+        && (!('customerName' in value) || typeof value.customerName === 'string' || value.customerName === null)
         && isPaymentMethod(value.paymentMethod)
         && typeof value.paidAt === 'string'
         && (!('subtotal' in value) || typeof value.subtotal === 'number')
         && (!('discountPercent' in value) || typeof value.discountPercent === 'number')
         && (!('discountAmount' in value) || typeof value.discountAmount === 'number')
         && typeof value.total === 'number'
+        && (!('cashAmount' in value) || (typeof value.cashAmount === 'number' && Number.isFinite(value.cashAmount) && value.cashAmount >= 0))
+        && (!('onlineAmount' in value) || (typeof value.onlineAmount === 'number' && Number.isFinite(value.onlineAmount) && value.onlineAmount >= 0))
+        && (value.paymentMethod !== 'SPLIT' || (typeof value.cashAmount === 'number' && typeof value.onlineAmount === 'number'
+            && value.cashAmount > 0 && value.onlineAmount > 0
+            && Math.round(value.cashAmount * 100) + Math.round(value.onlineAmount * 100) === Math.round(value.total * 100)))
         && Array.isArray(value.lines)
         && value.lines.every(isPaidOrderLine)
         && (value.refund === null || isBillRefund(value.refund))
@@ -211,6 +248,14 @@ export function isPaidOrders(value: unknown): value is PaidOrder[] {
 export function isOpenOrder(value: unknown): value is OpenOrder {
     return isRecord(value)
         && typeof value.tableName === 'string'
+        && (!('tableLabel' in value) || value.tableLabel === null || typeof value.tableLabel === 'string')
+        && (!('orderDescription' in value) || value.orderDescription === null || typeof value.orderDescription === 'string')
+        && (!('committeeDiscountPercent' in value) || value.committeeDiscountPercent === null
+            || (typeof value.committeeDiscountPercent === 'number' && Number.isFinite(value.committeeDiscountPercent)
+                && value.committeeDiscountPercent >= 0 && value.committeeDiscountPercent <= 100))
+        && (!('customerName' in value) || typeof value.customerName === 'string' || value.customerName === null)
+        && (!('customerPhone' in value) || typeof value.customerPhone === 'string' || value.customerPhone === null)
+        && (!('customerDateOfBirth' in value) || typeof value.customerDateOfBirth === 'string' || value.customerDateOfBirth === null)
         && (!('subtotal' in value) || typeof value.subtotal === 'number')
         && (!('discountPercent' in value) || typeof value.discountPercent === 'number')
         && (!('discountAmount' in value) || typeof value.discountAmount === 'number')
@@ -222,6 +267,17 @@ export function isOpenOrder(value: unknown): value is OpenOrder {
 
 export function isOpenOrders(value: unknown): value is OpenOrder[] {
     return Array.isArray(value) && value.every(isOpenOrder)
+}
+
+export function isCustomerDetails(value: unknown): value is CustomerDetails {
+    return isRecord(value)
+        && (typeof value.name === 'string' || value.name === null)
+        && typeof value.phoneNumber === 'string'
+        && (typeof value.dateOfBirth === 'string' || value.dateOfBirth === null)
+}
+
+export function isCustomerDetailsList(value: unknown): value is CustomerDetails[] {
+    return Array.isArray(value) && value.every(isCustomerDetails)
 }
 
 export function isExpense(value: unknown): value is Expense {
@@ -289,7 +345,11 @@ export function isBusinessDayStatus(value: unknown): value is BusinessDayStatus 
 }
 
 export function getPaymentMethodLabel(paymentMethod: PaymentMethod) {
-    return paymentMethod === 'CASH' ? 'Cash' : 'Online'
+    return paymentMethod === 'CASH' ? 'Cash' : paymentMethod === 'ONLINE' ? 'Online' : 'Split'
+}
+
+export function formatCustomerName(customerName?: string | null) {
+    return customerName?.trim() || 'NA'
 }
 
 export function getRefundTypeLabel(refundType: RefundType) {

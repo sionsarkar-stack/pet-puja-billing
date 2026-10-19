@@ -1,9 +1,10 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
+import { Fragment, type KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { useRestaurantConfiguration } from './RestaurantConfiguration'
 import type { UserMode } from './userMode'
 import BalanceSheetManager from './BalanceSheetManager'
 import BackupManager from './BackupManager'
 import DailyClosingManager from './DailyClosingManager'
+import CustomerDetailsManager from './CustomerDetailsManager'
 import ExpensesManager from './ExpensesManager'
 import HistoryManager from './HistoryManager'
 import DetailsManager from './DetailsManager'
@@ -20,17 +21,30 @@ type WorkspaceProps = {
     username: string
 }
 
-type WorkspaceTab = 'table' | 'menu' | 'history' | 'expenses' | 'daily-close' | 'balance-sheet' | 'profit-fact' | 'backup'
+type WorkspaceTab = 'table' | 'menu' | 'history' | 'customers' | 'expenses' | 'daily-close' | 'balance-sheet' | 'profit-fact' | 'backup'
 
 const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: 'table', label: 'Table' },
     { id: 'menu', label: 'Details' },
     { id: 'history', label: 'History' },
     { id: 'expenses', label: 'Expenses' },
-    { id: 'daily-close', label: 'Daily close' },
+    { id: 'daily-close', label: 'Daily start/close' },
     { id: 'balance-sheet', label: 'Balance sheet' },
-    { id: 'profit-fact', label: 'Profit Fact' },
+    { id: 'profit-fact', label: 'Revenue' },
     { id: 'backup', label: 'Backup' },
+    { id: 'customers', label: 'Customer details' },
+]
+
+const bannerImages: Array<{ position: string; src: string }> = [
+    { src: '/players/manchester-united.png', position: 'center' },
+    { src: '/players/messi.jpg', position: 'center 20%' },
+    { src: '/players/rooney.webp', position: 'center 18%' },
+    { src: '/players/manchester-united.jpg', position: 'center' },
+    { src: '/players/Lion_quote_2.webp', position: 'center' },
+    { src: '/players/lion_quote.webp', position: 'center' },
+    { src: '/players/Sachin.jpg', position: 'center' },
+    { src: '/players/netaji.jpeg', position: 'center' },
+    { src: '/players/Introdcution_statement.png', position: 'center' },
 ]
 
 function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
@@ -174,9 +188,29 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
             <div className="workspace-shell" ref={shellRef}>
                 <div aria-hidden="true" className="workspace-banner">
-                    <img alt="" className="banner-slide banner-slide-1" src="/players/manchester-united.png" />
-                    <img alt="" className="banner-slide banner-slide-2" src="/players/messi.jpg" />
-                    <img alt="" className="banner-slide banner-slide-3" src="/players/rooney.webp" />
+                    {bannerImages.map((image, index) => (
+                        <Fragment key={image.src}>
+                            <span
+                                aria-hidden="true"
+                                className="banner-slide-backdrop"
+                                style={{
+                                    animationDelay: `${index * 6}s`,
+                                    backgroundImage: `url("${image.src}")`,
+                                    backgroundPosition: image.position,
+                                }}
+                            />
+                            <img
+                                alt=""
+                                className="banner-slide"
+                                src={image.src}
+                                style={{
+                                    animationDelay: `${index * 6}s`,
+                                    objectFit: 'contain',
+                                    objectPosition: image.position,
+                                }}
+                            />
+                        </Fragment>
+                    ))}
                     <span className="banner-title">{restaurantName}</span>
                 </div>
                 <nav aria-label="Restaurant management" className="workspace-tabs" role="tablist">
@@ -221,7 +255,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                         id="panel-table"
                         role="tabpanel"
                     >
-                        <TableManager isActive={activeTab === 'table'} />
+                        <TableManager canManageCommitteeMembers={mode === 'ADMIN'} isActive={activeTab === 'table'} />
                     </section>
                 )}
 
@@ -233,6 +267,17 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                         role="tabpanel"
                     >
                         <HistoryManager mode={mode} />
+                    </section>
+                )}
+
+                {activeTab === 'customers' && mode === 'ADMIN' && (
+                    <section
+                        aria-labelledby="tab-customers"
+                        className="workspace-content"
+                        id="panel-customers"
+                        role="tabpanel"
+                    >
+                        <CustomerDetailsManager />
                     </section>
                 )}
 

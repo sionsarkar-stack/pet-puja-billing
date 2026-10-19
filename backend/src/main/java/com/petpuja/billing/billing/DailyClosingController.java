@@ -139,11 +139,8 @@ public class DailyClosingController {
         var cashSales = BigDecimal.ZERO;
         var onlineSales = BigDecimal.ZERO;
         for (var paidBill : paidBills) {
-            if (paidBill.getPaymentMethod() == PaymentMethod.CASH) {
-                cashSales = cashSales.add(paidBill.getTotal());
-            } else {
-                onlineSales = onlineSales.add(paidBill.getTotal());
-            }
+            cashSales = cashSales.add(paidBill.getCashAmount());
+            onlineSales = onlineSales.add(paidBill.getOnlineAmount());
         }
 
         var savedRefunds = billRefundRepository.findAllByRefundedAtGreaterThanEqualAndRefundedAtLessThan(
@@ -162,8 +159,8 @@ public class DailyClosingController {
             expenses = expenses.add(expense.getAmount());
         }
 
-        var profits = cashSales.add(onlineSales);
-        var revenue = profits.subtract(refunds).subtract(expenses);
+        var revenue = cashSales.add(onlineSales);
+        var profits = revenue.subtract(refunds).subtract(expenses);
         return new DailyClosingPreviewResponse(
                 closingDate,
                 cashSales,

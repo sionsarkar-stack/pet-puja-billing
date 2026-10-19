@@ -31,6 +31,11 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
     const [isSaving, setIsSaving] = useState(false)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const [closingPreview, setClosingPreview] = useState<DailyClosingPreview | null>(null)
+    const [activeDayPreview, setActiveDayPreview] = useState<DailyClosingPreview | null>(null)
+    const currentActiveDayPreview = businessDayStatus.active
+        && activeDayPreview?.startedAt === businessDayStatus.startedAt
+        ? activeDayPreview
+        : null
 
     useEffect(() => {
         const controller = new AbortController()
@@ -58,6 +63,39 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
         return () => controller.abort()
     }, [])
 
+    useEffect(() => {
+        if (!businessDayStatus.active) return
+
+        const controller = new AbortController()
+        let isRefreshing = false
+
+        async function refreshActiveDay() {
+            if (isRefreshing) return
+            isRefreshing = true
+            try {
+                const response = await fetch(`${apiBaseUrl}/api/daily-closings/preview`, {
+                    credentials: 'include',
+                    signal: controller.signal,
+                })
+                if (!response.ok) return
+
+                const data: unknown = await response.json()
+                if (isDailyClosingPreview(data) && !controller.signal.aborted) setActiveDayPreview(data)
+            } catch {
+                // Keep the last successful live totals visible during a transient network failure.
+            } finally {
+                isRefreshing = false
+            }
+        }
+
+        void refreshActiveDay()
+        const intervalId = window.setInterval(() => void refreshActiveDay(), 5_000)
+        return () => {
+            window.clearInterval(intervalId)
+            controller.abort()
+        }
+    }, [businessDayStatus.active, businessDayStatus.startedAt])
+
     async function startBusinessDay() {
         if (isSaving || businessDayStatus.active) return
 
@@ -76,6 +114,7 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
 
             const status: unknown = await response.json()
             if (!isBusinessDayStatus(status)) throw new Error('Business day status has an unexpected shape')
+            setActiveDayPreview(null)
             onBusinessDayStatusChange(status)
             setMessage({ text: `Business day started for ${status.businessDate}.`, tone: 'success' })
         } catch {
@@ -128,6 +167,7 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
 
             setDailyClosings((currentDailyClosings) => [data, ...currentDailyClosings]
                 .sort((firstClosing, secondClosing) => secondClosing.closingDate.localeCompare(firstClosing.closingDate)))
+            setActiveDayPreview(null)
             onBusinessDayStatusChange({ active: false, startedAt: null, businessDate: null })
             setClosingPreview(null)
             setMessage({ text: 'Business day ended and totals saved.', tone: 'success' })
@@ -143,7 +183,7 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
         <div className="daily-close-workspace">
             <header className="daily-close-page-heading">
                 <div>
-                    <p className="eyebrow">Daily close</p>
+                    <p className="eyebrow">Daily start/close</p>
                     <h1>Start or end a business day</h1>
                 </div>
                 <p>Start a day before opening tables. End it at any time; the start date labels its totals.</p>
@@ -195,9 +235,10 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                                 <div><dt>Ending</dt><dd>{formatDateTime(closingPreview.endedAt)}</dd></div>
                                 <div><dt>Cash sales</dt><dd>{currencyFormatter.format(closingPreview.cashSales)}</dd></div>
                                 <div><dt>Online sales</dt><dd>{currencyFormatter.format(closingPreview.onlineSales)}</dd></div>
+                                <div><dt>Revenue</dt><dd>{currencyFormatter.format(closingPreview.revenue)}</dd></div>
                                 <div><dt>Refunds</dt><dd>-{currencyFormatter.format(closingPreview.refunds)}</dd></div>
                                 <div><dt>Expenses</dt><dd>-{currencyFormatter.format(closingPreview.expenses)}</dd></div>
-                                <div className="daily-close-preview-revenue"><dt>Revenue</dt><dd>{currencyFormatter.format(closingPreview.revenue)}</dd></div>
+                                <div className="daily-close-preview-profit"><dt>Profits</dt><dd>{currencyFormatter.format(closingPreview.profits)}</dd></div>
                                 <div><dt>Records</dt><dd>{closingPreview.paidOrderCount} orders, {closingPreview.expenseCount} expenses</dd></div>
                             </dl>
                         </ConfirmationDialog>
@@ -212,7 +253,7 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                             <span>{dailyClosings.length} {dailyClosings.length === 1 ? 'day' : 'days'}</span>
                         </header>
 
-                        {dailyClosings.length === 0 ? (
+                        {dailyClosings.length === 0 && !businessDayStatus.active ? (
                             <p className="financial-empty">No business days have been closed yet.</p>
                         ) : (
                             <div className="financial-table-wrap daily-closing-table-wrap">
@@ -222,14 +263,28 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                                             <th scope="col">Started</th>
                                             <th scope="col">Cash</th>
                                             <th scope="col">Online</th>
-                                            <th scope="col">Profits</th>
+                                            <th scope="col">Revenue</th>
                                             <th scope="col">Refunds</th>
                                             <th scope="col">Expenses</th>
-                                            <th scope="col">Revenue</th>
+                                            <th scope="col">Profits</th>
                                             <th scope="col">Ended</th>
                                         </tr>
                                     </thead>
                                     <tbody>
+                                        {businessDayStatus.active
+                                            && businessDayStatus.startedAt
+                                            && !dailyClosings.some((dailyClosing) => dailyClosing.closingDate === businessDayStatus.businessDate) && (
+                                                <tr className="daily-closing-live-row">
+                                                    <td><strong>{formatDateTime(businessDayStatus.startedAt)}</strong></td>
+                                                    <td>{currencyFormatter.format(currentActiveDayPreview?.cashSales ?? 0)}</td>
+                                                    <td>{currencyFormatter.format(currentActiveDayPreview?.onlineSales ?? 0)}</td>
+                                                    <td>{currencyFormatter.format(currentActiveDayPreview?.revenue ?? 0)}</td>
+                                                    <td>{currencyFormatter.format(-(currentActiveDayPreview?.refunds ?? 0))}</td>
+                                                    <td>{currencyFormatter.format(currentActiveDayPreview?.expenses ?? 0)}</td>
+                                                    <td>{currencyFormatter.format(currentActiveDayPreview?.profits ?? 0)}</td>
+                                                    <td>Yet to close</td>
+                                                </tr>
+                                            )}
                                         {dailyClosings.map((dailyClosing) => (
                                             <tr key={dailyClosing.id}>
                                                 <td className="daily-closing-started">
@@ -237,10 +292,10 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                                                 </td>
                                                 <td>{currencyFormatter.format(dailyClosing.cashSales)}</td>
                                                 <td>{currencyFormatter.format(dailyClosing.onlineSales)}</td>
-                                                <td>{currencyFormatter.format(dailyClosing.profits)}</td>
+                                                <td>{currencyFormatter.format(dailyClosing.revenue)}</td>
                                                 <td>{currencyFormatter.format(-dailyClosing.refunds)}</td>
                                                 <td>{currencyFormatter.format(dailyClosing.expenses)}</td>
-                                                <td>{currencyFormatter.format(dailyClosing.revenue)}</td>
+                                                <td>{currencyFormatter.format(dailyClosing.profits)}</td>
                                                 <td>{formatDateTime(dailyClosing.closedAt)}</td>
                                             </tr>
                                         ))}

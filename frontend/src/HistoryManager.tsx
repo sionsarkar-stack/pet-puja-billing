@@ -1,12 +1,16 @@
 import type { UserMode } from './userMode'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import ConfirmationDialog from './ConfirmationDialog'
+import { createOrderDocument } from './orderDocument'
+import { useRestaurantConfiguration } from './RestaurantConfiguration'
 import {
     apiBaseUrl,
     currencyFormatter,
+    formatCustomerName,
     formatDateTime,
     getDateInputValue,
     getPaymentMethodLabel,
+    getTableDisplayName,
     getRefundTypeLabel,
     isBillRefund,
     isPaidOrders,
@@ -22,7 +26,17 @@ type RefundMessage = {
 
 type HistoryStatusFilter = 'ALL' | 'PAID' | RefundType
 
+type HistoryInvoicePreview = {
+    billNumber: string
+    url: string
+}
+
+function getInvoiceFileName(billNumber: string) {
+    return `${billNumber.toLowerCase().replaceAll(/[^a-z0-9-]/g, '-')}-invoice.pdf`
+}
+
 function HistoryManager({ mode }: { mode: UserMode }) {
+    const { restaurantName } = useRestaurantConfiguration()
     const [paidOrders, setPaidOrders] = useState<PaidOrder[]>([])
     const [selectedPaidOrder, setSelectedPaidOrder] = useState<PaidOrder | null>(null)
     const [refundType, setRefundType] = useState<RefundType>('REFUND')
@@ -37,14 +51,21 @@ function HistoryManager({ mode }: { mode: UserMode }) {
     const [seatingFilter, setSeatingFilter] = useState('ALL')
     const [paymentMethodFilter, setPaymentMethodFilter] = useState<PaymentMethod | 'ALL'>('ALL')
     const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>('ALL')
+    const [invoicePreview, setInvoicePreview] = useState<HistoryInvoicePreview | null>(null)
 
-    const seatingOptions = [...new Set(paidOrders.map((paidOrder) => paidOrder.tableName))]
+    useEffect(() => {
+        if (invoicePreview === null) return
+        const { url } = invoicePreview
+        return () => URL.revokeObjectURL(url)
+    }, [invoicePreview])
+
+    const seatingOptions = [...new Set(paidOrders.map(getTableDisplayName))]
         .sort((firstSeating, secondSeating) => firstSeating.localeCompare(secondSeating))
     const filteredPaidOrders = paidOrders.filter((paidOrder) => {
         const paidDate = getDateInputValue(paidOrder.paidAt)
         if (fromDate && (paidDate === null || paidDate < fromDate)) return false
         if (toDate && (paidDate === null || paidDate > toDate)) return false
-        if (seatingFilter !== 'ALL' && paidOrder.tableName !== seatingFilter) return false
+        if (seatingFilter !== 'ALL' && getTableDisplayName(paidOrder) !== seatingFilter) return false
         if (paymentMethodFilter !== 'ALL' && paidOrder.paymentMethod !== paymentMethodFilter) return false
         if (statusFilter === 'PAID' && paidOrder.refund !== null) return false
         if ((statusFilter === 'REFUND' || statusFilter === 'VOID') && paidOrder.refund?.refundType !== statusFilter) return false
@@ -63,6 +84,37 @@ function HistoryManager({ mode }: { mode: UserMode }) {
         setSeatingFilter('ALL')
         setPaymentMethodFilter('ALL')
         setStatusFilter('ALL')
+    }
+
+    function seeInvoice(paidOrder: PaidOrder) {
+        const discountAmount = paidOrder.discountAmount ?? 0
+        const url = URL.createObjectURL(createOrderDocument({
+            documentTitle: 'INVOICE',
+            issuedAt: new Date(paidOrder.paidAt),
+            lines: paidOrder.lines.map((line) => ({
+                itemName: line.itemName,
+                lineTotal: line.lineTotal,
+                quantity: line.quantity,
+                section: line.section ?? 'Other',
+                unitPrice: line.unitPrice,
+            })),
+            paymentMethod: paidOrder.paymentMethod,
+            cashAmount: paidOrder.cashAmount,
+            onlineAmount: paidOrder.onlineAmount,
+            paymentStatus: 'PAID',
+            reference: paidOrder.billNumber,
+            restaurantName,
+            seatingName: getTableDisplayName(paidOrder),
+            isCommitteeOrder: paidOrder.tableName.startsWith('Committee '),
+            tableLabel: paidOrder.tableLabel,
+            orderDescription: paidOrder.orderDescription,
+            customerName: paidOrder.customerName,
+            subtotal: paidOrder.subtotal ?? paidOrder.total + discountAmount,
+            discountPercent: paidOrder.discountPercent ?? 0,
+            discountAmount,
+            total: paidOrder.total,
+        }))
+        setInvoicePreview({ billNumber: paidOrder.billNumber, url })
     }
 
     useEffect(() => {
@@ -230,6 +282,7 @@ function HistoryManager({ mode }: { mode: UserMode }) {
                                 <option value="ALL">All payments</option>
                                 <option value="CASH">Cash</option>
                                 <option value="ONLINE">Online</option>
+                                <option value="SPLIT">Split</option>
                             </select>
                         </label>
                         <label htmlFor="history-status-filter">
@@ -260,38 +313,86 @@ function HistoryManager({ mode }: { mode: UserMode }) {
                                 <tr>
                                     <th scope="col">Date</th>
                                     <th scope="col">Seating</th>
+                                    <th scope="col">Customer</th>
                                     <th scope="col">Paid by</th>
                                     <th scope="col">Paid price</th>
                                     <th scope="col">Status</th>
-                                    <th scope="col">Correction</th>
+                                    <th scope="col">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredPaidOrders.map((paidOrder) => (
-                                    <tr key={paidOrder.id}>
-                                        <td>{formatDateTime(paidOrder.paidAt)}</td>
-                                        <td>{paidOrder.tableName}</td>
-                                        <td>{getPaymentMethodLabel(paidOrder.paymentMethod)}</td>
-                                        <td>{currencyFormatter.format(paidOrder.total)}</td>
-                                        <td>
-                                            <span className={paidOrder.refund ? 'history-status history-status-corrected' : 'history-status'}>
-                                                {paidOrder.refund ? getRefundTypeLabel(paidOrder.refund.refundType) : 'Paid'}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            {paidOrder.refund ? (
-                                                <span className="history-correction-details">
-                                                    <strong>-{currencyFormatter.format(paidOrder.refund.amount)}</strong>
-                                                    <span>{paidOrder.refund.reason}</span>
-                                                    {paidOrder.refund.refundedBy && <small>by {paidOrder.refund.refundedBy}</small>}
+                                    <Fragment key={paidOrder.id}>
+                                        <tr>
+                                            <td>{formatDateTime(paidOrder.paidAt)}</td>
+                                            <td>{getTableDisplayName(paidOrder)}</td>
+                                            <td>{formatCustomerName(paidOrder.customerName)}</td>
+                                            <td>{getPaymentMethodLabel(paidOrder.paymentMethod)}
+                                                {paidOrder.paymentMethod === 'SPLIT' && <small className="payment-breakdown">Cash: {currencyFormatter.format(paidOrder.cashAmount ?? 0)}<br />Online: {currencyFormatter.format(paidOrder.onlineAmount ?? 0)}</small>}
+                                            </td>
+                                            <td>{currencyFormatter.format(paidOrder.total)}</td>
+                                            <td>
+                                                <span className={paidOrder.refund ? 'history-status history-status-corrected' : 'history-status'}>
+                                                    {paidOrder.refund ? getRefundTypeLabel(paidOrder.refund.refundType) : 'Paid'}
                                                 </span>
-                                            ) : mode !== 'ADMIN' ? null : (
-                                                <button className="history-refund-action" onClick={() => startRefund(paidOrder)} type="button">
-                                                    Void / refund
-                                                </button>
-                                            )}
-                                        </td>
-                                    </tr>
+                                            </td>
+                                            <td>
+                                                <div className="history-row-actions">
+                                                    <button
+                                                        aria-label={`See invoice for ${paidOrder.billNumber}`}
+                                                        className="history-refund-action"
+                                                        onClick={() => seeInvoice(paidOrder)}
+                                                        type="button"
+                                                    >
+                                                        See invoice
+                                                    </button>
+                                                    {paidOrder.refund ? (
+                                                        <span className="history-correction-details">
+                                                            <strong>-{currencyFormatter.format(paidOrder.refund.amount)}</strong>
+                                                            <span>{paidOrder.refund.reason}</span>
+                                                            {paidOrder.refund.refundedBy && <small>by {paidOrder.refund.refundedBy}</small>}
+                                                        </span>
+                                                    ) : mode === 'ADMIN' ? (
+                                                        <button className="history-refund-action" onClick={() => startRefund(paidOrder)} type="button">
+                                                            Void / refund
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {invoicePreview?.billNumber === paidOrder.billNumber && (
+                                            <tr className="history-invoice-row">
+                                                <td className="history-invoice-cell" colSpan={7}>
+                                                    <section aria-labelledby="history-invoice-heading" className="invoice-preview history-inline-invoice">
+                                                        <header className="invoice-preview-heading">
+                                                            <h3 id="history-invoice-heading">Invoice {invoicePreview.billNumber}</h3>
+                                                            <div className="history-invoice-actions">
+                                                                <a
+                                                                    className="invoice-download"
+                                                                    download={getInvoiceFileName(invoicePreview.billNumber)}
+                                                                    href={invoicePreview.url}
+                                                                >
+                                                                    Download invoice
+                                                                </a>
+                                                                <button
+                                                                    aria-label="Close invoice preview"
+                                                                    className="refund-cancel"
+                                                                    onClick={() => setInvoicePreview(null)}
+                                                                    type="button"
+                                                                >
+                                                                    Close
+                                                                </button>
+                                                            </div>
+                                                        </header>
+                                                        <iframe
+                                                            src={invoicePreview.url}
+                                                            title={`Invoice preview for ${invoicePreview.billNumber}`}
+                                                        />
+                                                    </section>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </Fragment>
                                 ))}
                             </tbody>
                         </table>

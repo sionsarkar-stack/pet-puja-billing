@@ -6,6 +6,7 @@ export const menuSections = [
     { name: 'Beverages', subsections: ['Hot Beverages', 'Cold Beverages'] },
     { name: 'Continental', subsections: ['Starters', 'Sandwiches', 'Pizza', 'Pasta'] },
     { name: 'Chinese', subsections: ['Noodles & Rice', 'Main Course', 'Starters'] },
+    { name: 'Combo', subsections: [] },
     { name: 'Other', subsections: [] },
 ]
 

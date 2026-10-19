@@ -9,4 +9,6 @@ public interface MenuItemRepository extends JpaRepository<MenuItem, Long> {
     List<MenuItem> findAllByOrderByNameAsc();
 
     List<MenuItem> findAllByAvailableTrueOrderBySectionAscSubsectionAscNameAsc();
+
+    boolean existsByAvailableTrueAndComboItems_Id(Long componentId);
 }

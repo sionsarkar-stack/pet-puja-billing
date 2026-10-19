@@ -11,8 +11,9 @@ public class RestaurantConfigurationController {
 
     public RestaurantConfigurationController(
             @Value("${app.restaurant.name:Restaurant}") String restaurantName,
-            @Value("${app.payment.upi-vpa:}") String upiVpa) {
-        configuration = new RestaurantConfiguration(restaurantName, upiVpa);
+            @Value("${app.payment.upi-vpa:}") String upiVpa,
+            @Value("${app.payment.secondary-upi-vpa:}") String secondaryUpiVpa) {
+        configuration = new RestaurantConfiguration(restaurantName, upiVpa, secondaryUpiVpa);
     }
 
     @GetMapping("/api/public-config")
@@ -20,6 +21,6 @@ public class RestaurantConfigurationController {
         return configuration;
     }
 
-    public record RestaurantConfiguration(String restaurantName, String upiVpa) {
+    public record RestaurantConfiguration(String restaurantName, String upiVpa, String secondaryUpiVpa) {
     }
 }

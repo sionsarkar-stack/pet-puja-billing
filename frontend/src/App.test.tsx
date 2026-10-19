@@ -69,7 +69,7 @@ describe('App', () => {
     expect(screen.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Expenses' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Daily close' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Daily start/close' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Balance sheet' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Backup' })).toBeInTheDocument()
   })

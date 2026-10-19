@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getProfitDateRange, getSectionProfits } from './profitFact'
+import { getFoodRevenue, getProfitDateRange, getSectionRevenue } from './profitFact'
 import { getBusinessDateInputValue } from './businessDay'
 import type { PaidOrder } from './financial'
 
@@ -20,7 +20,7 @@ function makePaidOrder(paidAt: Date, changes: Partial<PaidOrder> = {}): PaidOrde
     }
 }
 
-describe('Profit Fact aggregation', () => {
+describe('Revenue-by-section aggregation', () => {
     it('allocates bill discounts and refunds proportionally across sections', () => {
         const paidAt = new Date('2026-06-15T08:00:00Z')
         const order = makePaidOrder(paidAt, {
@@ -34,7 +34,7 @@ describe('Profit Fact aggregation', () => {
             },
         })
 
-        expect(getSectionProfits([order], 'day', '2026-06-15', new Date('2026-06-15T09:00:00Z'))).toEqual([
+        expect(getSectionRevenue([order], 'day', '2026-06-15', new Date('2026-06-15T09:00:00Z'))).toEqual([
             { amount: 160, section: 'Mains' },
             { amount: 80, section: 'Beverages' },
         ])
@@ -74,9 +74,43 @@ describe('Profit Fact aggregation', () => {
             total: 100,
         })
 
-        expect(getSectionProfits([order], 'all', '2026-06-15', now)).toEqual([
+        expect(getSectionRevenue([order], 'all', '2026-06-15', now)).toEqual([
             { amount: 100, section: 'Other' },
         ])
-        expect(getSectionProfits([order], 'day', '2026-06-15', now)).toEqual([])
+        expect(getSectionRevenue([order], 'day', '2026-06-15', now)).toEqual([])
+    })
+})
+
+describe('Revenue-by-food aggregation', () => {
+    it('combines repeated items, allocates discounts and refunds, and sorts by revenue descending', () => {
+        const now = new Date('2026-06-15T09:00:00Z')
+        const firstOrder = makePaidOrder(new Date('2026-06-15T08:00:00Z'), {
+            lines: [
+                { itemName: 'Tea', lineTotal: 50, quantity: 1, section: 'Beverages', unitPrice: 50 },
+                { itemName: 'Dosa', lineTotal: 100, quantity: 1, section: 'Mains', unitPrice: 100 },
+            ],
+            total: 135,
+            refund: {
+                amount: 15,
+                billId: 1,
+                id: 2,
+                reason: 'Test refund',
+                refundedAt: '2026-06-15T08:30:00Z',
+                refundType: 'REFUND',
+            },
+        })
+        const secondOrder = makePaidOrder(new Date('2026-06-15T08:45:00Z'), {
+            id: 2,
+            lines: [
+                { itemName: 'Dosa', lineTotal: 100, quantity: 1, section: 'Mains', unitPrice: 100 },
+                { itemName: 'Tea', lineTotal: 20, quantity: 1, section: 'Beverages', unitPrice: 20 },
+            ],
+            total: 120,
+        })
+
+        expect(getFoodRevenue([firstOrder, secondOrder], 'day', '2026-06-15', now)).toEqual([
+            { amount: 180, itemName: 'Dosa', quantity: 2 },
+            { amount: 60, itemName: 'Tea', quantity: 2 },
+        ])
     })
 })

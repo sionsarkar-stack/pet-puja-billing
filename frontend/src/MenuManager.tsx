@@ -11,6 +11,7 @@ type MenuItem = {
     discountApplied: number
     price: number
     addOns: MenuAddOn[]
+    comboItems: Array<{ id: number; name: string }>
 }
 
 type MenuAddOn = {
@@ -34,6 +35,7 @@ type MenuDraft = {
     price: string
     addOnsEnabled: boolean
     addOns: MenuAddOnDraft[]
+    comboItemIds: number[]
 }
 
 type MenuPayload = {
@@ -44,6 +46,7 @@ type MenuPayload = {
     discountApplied: number
     price: number
     addOns: Array<{ id: number | null; name: string; price: number }>
+    comboItemIds?: number[]
 }
 
 type MenuMessage = {
@@ -66,6 +69,7 @@ const emptyDraft: MenuDraft = {
     price: '',
     addOnsEnabled: false,
     addOns: [],
+    comboItemIds: [],
 }
 
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
@@ -95,6 +99,9 @@ function isMenuItem(value: unknown): value is MenuItem {
         && 'price' in value
         && typeof value.price === 'number'
         && (!('addOns' in value) || isMenuAddOns(value.addOns))
+        && (!('comboItems' in value) || (Array.isArray(value.comboItems)
+            && value.comboItems.every((item: unknown) => typeof item === 'object' && item !== null
+                && 'id' in item && typeof item.id === 'number' && 'name' in item && typeof item.name === 'string')))
 }
 
 function isMenuAddOns(value: unknown): value is MenuAddOn[] {
@@ -114,6 +121,7 @@ function normalizeMenuItem(menuItem: MenuItem): MenuItem {
         section: menuItem.section ?? 'Other',
         subsection: menuItem.subsection ?? '',
         addOns: menuItem.addOns ?? [],
+        comboItems: menuItem.comboItems ?? [],
     }
 }
 
@@ -147,6 +155,10 @@ function validateMenuDraft(menuDraft: MenuDraft): { error: string } | { payload:
         return { error: 'Discount must be between 0 and 100, and price cannot be negative.' }
     }
 
+    if (menuDraft.section === 'Combo' && menuDraft.comboItemIds.length === 0) {
+        return { error: 'Select at least one menu item for this combo.' }
+    }
+
     if (menuDraft.addOnsEnabled && (addOns.length === 0 || addOns.some((addOn) =>
         !addOn.name || addOn.name.length > 120 || !Number.isFinite(addOn.price) || addOn.price < 0))) {
         return { error: 'Enter a name and a valid non-negative price for every add-on.' }
@@ -161,8 +173,46 @@ function validateMenuDraft(menuDraft: MenuDraft): { error: string } | { payload:
             discountApplied,
             price,
             addOns,
+            ...(menuDraft.section === 'Combo' ? { comboItemIds: menuDraft.comboItemIds } : {}),
         },
     }
+}
+
+function ComboItemEditor({ items, selectedIds, disabled, id, onChange }: {
+    items: MenuItem[]
+    selectedIds: number[]
+    disabled: boolean
+    id: string
+    onChange: (ids: number[]) => void
+}) {
+    const [query, setQuery] = useState('')
+    const eligibleItems = items.filter((item) => item.section !== 'Combo')
+    const matchingItems = eligibleItems.filter((item) => item.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+
+    return (
+        <fieldset className="menu-combo-editor" disabled={disabled}>
+            <legend>Combo items ({selectedIds.length} selected)</legend>
+            <label className="field-group" htmlFor={`${id}-combo-search`}>
+                Find combo items
+                <input id={`${id}-combo-search`} onChange={(event) => setQuery(event.target.value)} type="search" value={query} />
+            </label>
+            <div className="menu-combo-options">
+                {matchingItems.map((item) => (
+                    <label className="menu-combo-option" key={item.id}>
+                        <input
+                            checked={selectedIds.includes(item.id)}
+                            onChange={(event) => onChange(event.target.checked
+                                ? [...selectedIds, item.id]
+                                : selectedIds.filter((selectedId) => selectedId !== item.id))}
+                            type="checkbox"
+                        />
+                        <span>{item.name}</span>
+                    </label>
+                ))}
+                {matchingItems.length === 0 && <p>{eligibleItems.length === 0 ? 'No eligible menu items.' : 'No matching items.'}</p>}
+            </div>
+        </fieldset>
+    )
 }
 
 type MenuAddOnEditorProps = {
@@ -276,7 +326,7 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
 
     function updateDraft(field: keyof MenuDraft, value: string) {
         setDraft((currentDraft) => field === 'section'
-            ? { ...currentDraft, section: value, subsection: getSubsections(value)[0] ?? '' }
+            ? { ...currentDraft, section: value, subsection: getSubsections(value)[0] ?? '', comboItemIds: [] }
             : { ...currentDraft, [field]: value })
     }
 
@@ -363,6 +413,7 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
             discountApplied: String(menuItem.discountApplied),
             price: String(menuItem.price),
             addOnsEnabled: menuItem.addOns.length > 0,
+            comboItemIds: menuItem.comboItems.map((item) => item.id),
             addOns: menuItem.addOns.map((addOn) => ({
                 id: addOn.id,
                 name: addOn.name,
@@ -382,7 +433,7 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
         setEditingDraft((currentDraft) => currentDraft === null
             ? currentDraft
             : field === 'section'
-                ? { ...currentDraft, section: value, subsection: getSubsections(value)[0] ?? '' }
+                ? { ...currentDraft, section: value, subsection: getSubsections(value)[0] ?? '', comboItemIds: [] }
                 : { ...currentDraft, [field]: value })
     }
 
@@ -427,6 +478,10 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
                 method: 'PUT',
             })
 
+            if (response.status === 409) {
+                setMessage({ tone: 'error', text: 'This item is used in a combo. Remove it from the combo before changing its section.' })
+                return
+            }
             if (!response.ok) {
                 throw new Error(`Menu update failed: ${response.status}`)
             }
@@ -459,6 +514,11 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
                 method: 'DELETE',
             })
 
+            if (response.status === 409) {
+                setMenuItemPendingDeletion(null)
+                setMessage({ tone: 'error', text: 'Remove this item from its combos before deleting it.' })
+                return
+            }
             if (!response.ok) {
                 throw new Error(`Menu deletion failed: ${response.status}`)
             }
@@ -492,25 +552,55 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
             <tr className={isEditing ? 'menu-table-row-editing' : undefined} key={menuItem.id}>
                 <td>
                     {isEditing ? (
-                        <input
-                            aria-label={`Name for ${menuItem.name}`}
-                            disabled={isUpdating}
-                            maxLength={120}
-                            onChange={(event) => updateEditingDraft('name', event.target.value)}
-                            value={editingDraft.name}
-                        />
+                        <div className="menu-edit-fields">
+                            <input
+                                aria-label={`Name for ${menuItem.name}`}
+                                disabled={isUpdating}
+                                maxLength={120}
+                                onChange={(event) => updateEditingDraft('name', event.target.value)}
+                                value={editingDraft.name}
+                            />
+                            <select
+                                aria-label={`Main section for ${menuItem.name}`}
+                                disabled={isUpdating}
+                                onChange={(event) => updateEditingDraft('section', event.target.value)}
+                                value={editingDraft.section}
+                            >
+                                {menuSections.map((section) => <option key={section.name} value={section.name}>{section.name}</option>)}
+                            </select>
+                            {getSubsections(editingDraft.section).length > 0 && <select
+                                aria-label={`Subsection for ${menuItem.name}`}
+                                disabled={isUpdating}
+                                onChange={(event) => updateEditingDraft('subsection', event.target.value)}
+                                value={editingDraft.subsection}
+                            >
+                                {getSubsections(editingDraft.section).map((subsection) => <option key={subsection}>{subsection}</option>)}
+                            </select>}
+                        </div>
                     ) : menuItem.name}
                 </td>
                 <td>
                     {isEditing ? (
-                        <input
-                            aria-label={`Description for ${menuItem.name}`}
-                            disabled={isUpdating}
-                            maxLength={500}
-                            onChange={(event) => updateEditingDraft('description', event.target.value)}
-                            value={editingDraft.description}
-                        />
-                    ) : menuItem.description || 'No description'}
+                        <div className="menu-edit-fields">
+                            <input
+                                aria-label={`Description for ${menuItem.name}`}
+                                disabled={isUpdating}
+                                maxLength={500}
+                                onChange={(event) => updateEditingDraft('description', event.target.value)}
+                                value={editingDraft.description}
+                            />
+                            {editingDraft.section === 'Combo' && <ComboItemEditor
+                                disabled={isUpdating}
+                                id={`edit-menu-${menuItem.id}`}
+                                items={menuItems.filter((item) => item.id !== menuItem.id)}
+                                onChange={(comboItemIds) => setEditingDraft((current) => current === null ? null : { ...current, comboItemIds })}
+                                selectedIds={editingDraft.comboItemIds}
+                            />}
+                        </div>
+                    ) : <>
+                        {menuItem.description || 'No description'}
+                        {menuItem.comboItems.length > 0 && <p className="menu-combo-components">{menuItem.comboItems.map((item) => item.name).join(', ')}</p>}
+                    </>}
                 </td>
                 <td>
                     {isEditing ? (
@@ -681,6 +771,14 @@ function MenuManager({ canManage = true }: MenuManagerProps) {
                             </select>
                         </div>
                     )}
+
+                    {draft.section === 'Combo' && <ComboItemEditor
+                        disabled={isSaving || isLoading}
+                        id="new-menu"
+                        items={menuItems}
+                        onChange={(comboItemIds) => setDraft((current) => ({ ...current, comboItemIds }))}
+                        selectedIds={draft.comboItemIds}
+                    />}
 
                     <div className="field-group">
                         <label htmlFor="menu-description">Description</label>

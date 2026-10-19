@@ -54,6 +54,10 @@ To restore a downloaded backup:
 
 4. Start the backend again with the `local` profile. Keep the moved `pet-puja.before-restore.mv.db` file until the restored data is confirmed.
 
+## Menu combos
+
+In **Details > Menu**, enter a name and choose **Combo** as the main section, then select existing non-combo menu items. Set the combo's own price, discount, description, and optional add-ons just like any other menu item. Combos are ordered and billed as a single item. Edit a combo to change its included items; remove a component from its combos before deleting it or changing its section to Combo.
+
 ## Paid order corrections
 
 Open **History**, select **Void / refund** on a paid order, choose the correction type, and enter a reason. Each paid order can be corrected once. The original paid order remains in History, while the negative adjustment appears in the Balance sheet and in a daily close created on the correction date. Previously saved daily closes remain unchanged.
@@ -113,6 +117,7 @@ dropdb pet_puja_restore_test
 | `CAPTAIN_PASSWORD` | Captain login password | Required |
 | `RESTAURANT_NAME` | Public restaurant name shown in the app, documents, and payment QR | `Restaurant` |
 | `UPI_VPA` | Public UPI payee address embedded in payment QR codes | Optional |
+| `SECONDARY_UPI_VPA` | Optional alternate payee available as a secondary QR choice | Optional |
 | `PORT` | Backend HTTP port | `8080` |
 | `SESSION_COOKIE_SECURE` | Send the login session only over HTTPS | `false` locally, `true` in production over HTTPS |
 | `VITE_API_BASE_URL` | Optional browser API origin | same origin |

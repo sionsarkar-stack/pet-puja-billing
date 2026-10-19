@@ -27,9 +27,9 @@ public class BalanceSheetController {
     @GetMapping
     @Transactional(readOnly = true)
     public BalanceSheetResponse getBalanceSheet() {
-        var profits = BigDecimal.ZERO;
+        var revenue = BigDecimal.ZERO;
         for (var bill : billRepository.findAllByStatus(BillStatus.PAID)) {
-            profits = profits.add(bill.getTotal());
+            revenue = revenue.add(bill.getTotal());
         }
 
         var refunds = BigDecimal.ZERO;
@@ -42,7 +42,8 @@ public class BalanceSheetController {
             expenses = expenses.add(expense.getAmount());
         }
 
-        return new BalanceSheetResponse(profits, refunds, expenses, profits.subtract(refunds).subtract(expenses));
+        var profits = revenue.subtract(refunds).subtract(expenses);
+        return new BalanceSheetResponse(profits, refunds, expenses, revenue);
     }
 
     public record BalanceSheetResponse(BigDecimal profits, BigDecimal refunds, BigDecimal expenses,

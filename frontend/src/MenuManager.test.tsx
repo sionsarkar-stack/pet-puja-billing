@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import MenuManager from './MenuManager'
@@ -167,6 +167,69 @@ describe('MenuManager', () => {
         await user.click(sandwichSummary)
         expect(screen.getByRole('table', { name: 'Saved menu items in Continental / Sandwiches' })).toBeInTheDocument()
         expect(await screen.findByText('Extra cheese (+₹20.00), Grilled chicken (+₹35.00)')).toBeInTheDocument()
+    })
+
+    it('creates and edits combos using only existing non-combo menu items', async () => {
+        const dosa = { id: 1, name: 'Dosa', description: null, section: 'Quick Bites', subsection: '', discountApplied: 0, price: 120, addOns: [] }
+        const tea = { ...dosa, id: 2, name: 'Tea', price: 30 }
+        const existingCombo = { ...dosa, id: 3, name: 'Existing combo', section: 'Combo', comboItems: [{ id: 1, name: 'Dosa' }] }
+        const newCombo = { ...existingCombo, id: 4, name: 'Lunch combo', price: 130, comboItems: [{ id: 1, name: 'Dosa' }, { id: 2, name: 'Tea' }] }
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse([dosa, tea, existingCombo]))
+            .mockResolvedValueOnce(jsonResponse(newCombo, 201))
+            .mockResolvedValueOnce(jsonResponse({ ...newCombo, comboItems: [{ id: 1, name: 'Dosa' }] }))
+        const user = userEvent.setup()
+        render(<MenuManager />)
+
+        await screen.findByText('Existing combo')
+        await user.type(screen.getByLabelText('Name'), 'Lunch combo')
+        await user.selectOptions(screen.getByLabelText('Main section'), 'Combo')
+        await user.type(screen.getByLabelText('Price (INR)'), '130')
+        await user.click(screen.getByRole('button', { name: 'Add menu item' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Select at least one menu item for this combo.')
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+
+        const selector = screen.getByRole('group', { name: 'Combo items (0 selected)' })
+        expect(within(selector).queryByRole('checkbox', { name: 'Existing combo' })).not.toBeInTheDocument()
+        await user.type(screen.getByLabelText('Find combo items'), 'dos')
+        expect(within(selector).queryByRole('checkbox', { name: 'Tea' })).not.toBeInTheDocument()
+        await user.click(within(selector).getByRole('checkbox', { name: 'Dosa' }))
+        await user.clear(screen.getByLabelText('Find combo items'))
+        await user.click(within(selector).getByRole('checkbox', { name: 'Tea' }))
+        await user.click(screen.getByRole('button', { name: 'Add menu item' }))
+        await screen.findByText('Menu item added.')
+        expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({
+            name: 'Lunch combo', description: null, section: 'Combo', subsection: '',
+            discountApplied: 0, price: 130, addOns: [], comboItemIds: [1, 2],
+        })
+
+        const comboSummary = screen.getAllByText('Combo').find((element) => element.parentElement?.tagName === 'SUMMARY')!
+        await user.click(comboSummary)
+        expect(screen.getByText('Dosa, Tea')).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Edit Lunch combo' }))
+        const editingSelector = screen.getByRole('group', { name: 'Combo items (2 selected)' })
+        expect(within(editingSelector).getByRole('checkbox', { name: 'Dosa' })).toBeChecked()
+        expect(within(editingSelector).getByRole('checkbox', { name: 'Tea' })).toBeChecked()
+        expect(within(editingSelector).getAllByRole('checkbox')).toHaveLength(2)
+        await user.click(within(editingSelector).getByRole('checkbox', { name: 'Tea' }))
+        await user.click(screen.getByRole('button', { name: 'Save Lunch combo' }))
+        await screen.findByText('Menu item updated.')
+        expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string).comboItemIds).toEqual([1])
+    })
+
+    it('clears combo selections when changing back to an ordinary menu section', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([{
+            id: 1, name: 'Dosa', description: null, section: 'Other', subsection: '', discountApplied: 0, price: 120, addOns: [],
+        }]))
+        const user = userEvent.setup()
+        render(<MenuManager />)
+        await screen.findByText('Dosa')
+        await user.selectOptions(screen.getByLabelText('Main section'), 'Combo')
+        await user.click(screen.getByRole('checkbox', { name: 'Dosa' }))
+        await user.selectOptions(screen.getByLabelText('Main section'), 'Quick Bites')
+        expect(screen.queryByLabelText('Find combo items')).not.toBeInTheDocument()
+        await user.selectOptions(screen.getByLabelText('Main section'), 'Combo')
+        expect(screen.getByRole('checkbox', { name: 'Dosa' })).not.toBeChecked()
     })
 
     it('shows saved menu values in a table beneath the form', async () => {

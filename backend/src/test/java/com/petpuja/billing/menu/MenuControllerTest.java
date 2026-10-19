@@ -142,6 +142,86 @@ class MenuControllerTest {
                                 .andExpect(jsonPath("$[0].addOns.length()").value(1));
         }
 
+        @Test
+        void createsEditsAndRemovesCombosWithoutChangingComponentPrices() throws Exception {
+                var session = signIn();
+                var component = menuItemRepository.save(MenuItem.create("Dosa", null,
+                                java.math.BigDecimal.ZERO, new java.math.BigDecimal("120")));
+                var otherComponent = menuItemRepository.save(MenuItem.create("Tea", null,
+                                java.math.BigDecimal.ZERO, new java.math.BigDecimal("30")));
+                var result = mockMvc.perform(post("/api/menu").session(session).contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Lunch combo","section":"Combo","discountApplied":10,"price":130,
+                                                "comboItemIds":[%d,%d],"addOns":[{"name":"Cheese","price":20}]}
+                                                """
+                                                .formatted(component.getId(), otherComponent.getId())))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.comboItems.length()").value(2))
+                                .andExpect(jsonPath("$.comboItems[0].name").value("Dosa"))
+                                .andExpect(jsonPath("$.price").value(130))
+                                .andExpect(jsonPath("$.discountApplied").value(10))
+                                .andExpect(jsonPath("$.addOns[0].name").value("Cheese"))
+                                .andReturn();
+                var comboId = ((Number) com.jayway.jsonpath.JsonPath.read(
+                                result.getResponse().getContentAsString(), "$.id")).longValue();
+
+                mockMvc.perform(delete("/api/menu/{id}", component.getId()).session(session))
+                                .andExpect(status().isConflict());
+                mockMvc.perform(put("/api/menu/{id}", component.getId()).session(session).contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Nested combo","section":"Combo","discountApplied":0,"price":100,"comboItemIds":[%d]}
+                                                """
+                                                .formatted(otherComponent.getId())))
+                                .andExpect(status().isConflict());
+                mockMvc.perform(put("/api/menu/{id}", comboId).session(session).contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Lunch combo","section":"Combo","discountApplied":5,"price":110,"comboItemIds":[%d]}
+                                                """
+                                                .formatted(component.getId())))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.comboItems.length()").value(1))
+                                .andExpect(jsonPath("$.price").value(110));
+                mockMvc.perform(get("/api/menu").session(session))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$[?(@.section == 'Combo')].comboItems[0].name").value("Dosa"));
+                assertThat(menuItemRepository.findById(component.getId()).orElseThrow().getPrice())
+                                .isEqualByComparingTo("120");
+                mockMvc.perform(delete("/api/menu/{id}", comboId).session(session)).andExpect(status().isNoContent());
+                assertThat(menuItemRepository.existsById(component.getId())).isTrue();
+        }
+
+        @Test
+        @Transactional
+        void rejectsEmptyMissingDuplicateNestedAndSelfReferencingComboItems() throws Exception {
+                var session = signIn();
+                var component = menuItemRepository.save(MenuItem.create("Dosa", null,
+                                java.math.BigDecimal.ZERO, new java.math.BigDecimal("120")));
+                var combo = menuItemRepository.save(MenuItem.create("Existing combo", null, "Combo",
+                                java.math.BigDecimal.ZERO, new java.math.BigDecimal("100")));
+                for (var ids : java.util.List.of("[]", "[999999999]", "[null]", "[-1]",
+                                "[%d,%d]".formatted(component.getId(), component.getId()),
+                                "[%d]".formatted(combo.getId()))) {
+                        mockMvc.perform(post("/api/menu").session(session).contentType(APPLICATION_JSON)
+                                        .content("""
+                                                        {"name":"Invalid combo","section":"Combo","discountApplied":0,"price":100,"comboItemIds":%s}
+                                                        """
+                                                        .formatted(ids)))
+                                        .andExpect(status().isBadRequest());
+                }
+                mockMvc.perform(put("/api/menu/{id}", combo.getId()).session(session).contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Self combo","section":"Combo","discountApplied":0,"price":100,"comboItemIds":[%d]}
+                                                """
+                                                .formatted(combo.getId())))
+                                .andExpect(status().isBadRequest());
+                mockMvc.perform(post("/api/menu").session(session).contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"name":"Ordinary item","section":"Other","discountApplied":0,"price":100,"comboItemIds":[%d]}
+                                                """
+                                                .formatted(component.getId())))
+                                .andExpect(status().isBadRequest());
+        }
+
         private MockHttpSession signIn() throws Exception {
                 MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
                                 .contentType(APPLICATION_JSON)

@@ -1,0 +1,1 @@
+ALTER TABLE daily_closing DROP CONSTRAINT IF EXISTS daily_closing_profits_check;

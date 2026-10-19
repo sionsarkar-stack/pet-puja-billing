@@ -56,6 +56,7 @@ function isRestaurantConfiguration(value: unknown): value is RestaurantConfigura
     && value.restaurantName.trim().length > 0
     && 'upiVpa' in value
     && typeof value.upiVpa === 'string'
+    && (!('secondaryUpiVpa' in value) || typeof value.secondaryUpiVpa === 'string')
 }
 
 function App({ splashDuration = 2000 }: { splashDuration?: number }) {
@@ -105,7 +106,7 @@ function App({ splashDuration = 2000 }: { splashDuration?: number }) {
         ])
         if (!isRestaurantConfiguration(configuration)) throw new Error('Restaurant configuration has an unexpected shape')
 
-        setRestaurantConfiguration(configuration)
+        setRestaurantConfiguration({ ...configuration, secondaryUpiVpa: configuration.secondaryUpiVpa ?? '' })
         if (isAuthenticatedSession(session)) {
           setAuthState({ status: 'signed-in', username: session.username, mode: session.mode })
           return

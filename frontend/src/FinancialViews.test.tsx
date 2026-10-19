@@ -10,8 +10,14 @@ import HistoryManager from './HistoryManager'
 const pdf = vi.hoisted(() => {
     const document = {
         addPage: vi.fn(),
+        line: vi.fn(),
+        output: vi.fn(() => new Blob(['invoice'], { type: 'application/pdf' })),
+        rect: vi.fn(),
         save: vi.fn(),
+        setDrawColor: vi.fn(),
+        setFillColor: vi.fn(),
         setFontSize: vi.fn(),
+        setTextColor: vi.fn(),
         splitTextToSize: vi.fn((value: string) => [value]),
         text: vi.fn(),
     }
@@ -36,7 +42,7 @@ function jsonResponse(body: unknown, status = 200) {
 const paidOrder = {
     billNumber: 'PP-123',
     id: 1,
-    lines: [{ itemName: 'Paneer Tikka', lineTotal: 400, quantity: 2, unitPrice: 200 }],
+    lines: [{ itemName: 'Paneer Tikka', lineTotal: 400, quantity: 2, section: 'Mains', unitPrice: 200 }],
     paidAt: '2026-09-15T12:00:00Z',
     paymentMethod: 'ONLINE',
     refund: null,
@@ -65,6 +71,7 @@ const refund = {
 describe('financial views', () => {
     afterEach(() => {
         cleanup()
+        vi.unstubAllGlobals()
         vi.restoreAllMocks()
         vi.clearAllMocks()
     })
@@ -87,8 +94,55 @@ describe('financial views', () => {
 
         const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
         expect(within(historyTable).getByText('Table 3')).toBeInTheDocument()
+        expect(within(historyTable).getByText('NA')).toBeInTheDocument()
         expect(within(historyTable).getByText('Online')).toBeInTheDocument()
         expect(within(historyTable).getByText('₹400.00')).toBeInTheDocument()
+    })
+
+    it('shows the saved ordering name in paid history', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([{ ...paidOrder, customerName: 'Aarav Mehta' }]))
+
+        render(<HistoryManager mode="ADMIN" />)
+
+        const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
+        expect(within(historyTable).getByText('Aarav Mehta')).toBeInTheDocument()
+    })
+
+    it('previews and downloads the original invoice for a refunded historical order', async () => {
+        vi.stubGlobal('URL', {
+            createObjectURL: vi.fn(() => 'blob:historical-invoice'),
+            revokeObjectURL: vi.fn(),
+        })
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([{
+            ...paidOrder,
+            billNumber: 'PP-REFUNDED',
+            discountAmount: 40,
+            discountPercent: 10,
+            refund,
+            subtotal: 400,
+            total: 360,
+        }]))
+        const user = userEvent.setup()
+
+        render(<HistoryManager mode="CAPTAIN" />)
+
+        const historyTable = await screen.findByRole('table', { name: 'Paid order history' })
+        await user.click(within(historyTable).getByRole('button', { name: 'See invoice for PP-REFUNDED' }))
+
+        const invoicePreview = screen.getByTitle('Invoice preview for PP-REFUNDED')
+        expect(invoicePreview).toHaveAttribute('src', 'blob:historical-invoice')
+        const expandedRow = invoicePreview.closest('tr')
+        expect(expandedRow).not.toBeNull()
+        expect(within(historyTable).getAllByRole('row')[2]).toBe(expandedRow)
+        expect(screen.getByRole('link', { name: 'Download invoice' })).toHaveAttribute(
+            'download',
+            'pp-refunded-invoice.pdf',
+        )
+        expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('Bill discount (10.00% of General)')
+        expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('INR 360.00')
+
+        await user.click(within(expandedRow!).getByRole('button', { name: 'Close invoice preview' }))
+        expect(screen.queryByTitle('Invoice preview for PP-REFUNDED')).not.toBeInTheDocument()
     })
 
     it('filters paid history by date, seating, payment method, and correction status', async () => {
@@ -214,7 +268,7 @@ describe('financial views', () => {
 
     it('shows profits, expenses, and revenue with their saved entries', async () => {
         vi.spyOn(globalThis, 'fetch')
-            .mockResolvedValueOnce(jsonResponse({ expenses: 75, profits: 400, refunds: 0, revenue: 325 }))
+            .mockResolvedValueOnce(jsonResponse({ expenses: 75, profits: 325, refunds: 0, revenue: 400 }))
             .mockResolvedValueOnce(jsonResponse([paidOrder]))
             .mockResolvedValueOnce(jsonResponse([expense]))
 
@@ -225,11 +279,14 @@ describe('financial views', () => {
         )
 
         await screen.findByRole('heading', { name: 'Financial position' })
-        const revenueMetric = screen.getByText('Revenue').closest('section')
+        const revenueMetric = screen.getByText('Paid order sales').closest('section')
+        const profitsMetric = screen.getByText('Revenue less refunds and expenses').closest('section')
         expect(revenueMetric).not.toBeNull()
-        expect(within(revenueMetric!).getByText('₹325.00')).toBeInTheDocument()
+        expect(profitsMetric).not.toBeNull()
+        expect(within(revenueMetric!).getByText('₹400.00')).toBeInTheDocument()
+        expect(within(profitsMetric!).getByText('₹325.00')).toBeInTheDocument()
 
-        const profitTable = screen.getByRole('table', { name: 'Paid profit entries' })
+        const profitTable = screen.getByRole('table', { name: 'Paid revenue entries' })
         const expenseTable = screen.getByRole('table', { name: 'Expense entries' })
         expect(within(profitTable).getByText('₹400.00')).toBeInTheDocument()
         expect(within(expenseTable).getByText('Vegetables')).toBeInTheDocument()
@@ -239,7 +296,7 @@ describe('financial views', () => {
     it('shows refund adjustments separately and includes them in the PDF export', async () => {
         const refundedPaidOrder = { ...paidOrder, refund }
         vi.spyOn(globalThis, 'fetch')
-            .mockResolvedValueOnce(jsonResponse({ expenses: 75, profits: 400, refunds: 400, revenue: -75 }))
+            .mockResolvedValueOnce(jsonResponse({ expenses: 75, profits: -75, refunds: 400, revenue: 400 }))
             .mockResolvedValueOnce(jsonResponse([refundedPaidOrder]))
             .mockResolvedValueOnce(jsonResponse([expense]))
         const user = userEvent.setup()
@@ -257,6 +314,8 @@ describe('financial views', () => {
 
         await user.click(screen.getByRole('button', { name: 'Export PDF' }))
         expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('-INR 400.00')
+        expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('INR 400.00')
+        expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('INR -75.00')
         expect(pdf.document.text.mock.calls.flat().join(' ')).toContain('Duplicate payment')
     })
 
@@ -279,7 +338,7 @@ describe('financial views', () => {
         const todayPaidOrder = { ...paidOrder, paidAt: `${today}T12:00:00Z` }
         const todayExpense = { ...expense, createdAt: `${today}T12:00:00Z` }
         vi.spyOn(globalThis, 'fetch')
-            .mockResolvedValueOnce(jsonResponse({ expenses: 125, profits: 600, refunds: 0, revenue: 475 }))
+            .mockResolvedValueOnce(jsonResponse({ expenses: 125, profits: 475, refunds: 0, revenue: 600 }))
             .mockResolvedValueOnce(jsonResponse([olderPaidOrder, todayPaidOrder]))
             .mockResolvedValueOnce(jsonResponse([olderExpense, todayExpense]))
         const user = userEvent.setup()

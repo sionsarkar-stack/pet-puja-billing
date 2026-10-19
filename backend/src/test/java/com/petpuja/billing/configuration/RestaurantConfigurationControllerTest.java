@@ -8,9 +8,13 @@ class RestaurantConfigurationControllerTest {
 
     @Test
     void returnsConfiguredRestaurantNameAndUpiVpa() {
-        var controller = new RestaurantConfigurationController("The Third Break", "sionsarkar@okicici");
+        var controller = new RestaurantConfigurationController(
+                "The Third Break", "sionsarkar@okicici", "backup@upi");
 
         assertThat(controller.getConfiguration().restaurantName()).isEqualTo("The Third Break");
         assertThat(controller.getConfiguration().upiVpa()).isEqualTo("sionsarkar@okicici");
+        assertThat(controller.getConfiguration().secondaryUpiVpa()).isEqualTo("backup@upi");
+        assertThat(new RestaurantConfigurationController("The Third Break", "sionsarkar@okicici", "")
+                .getConfiguration().secondaryUpiVpa()).isEmpty();
     }
 }

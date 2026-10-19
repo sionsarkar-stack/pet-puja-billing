@@ -20,6 +20,8 @@ import com.petpuja.billing.menu.MenuItemRepository;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -32,12 +34,14 @@ public class PaymentController {
     private final BillRepository billRepository;
     private final MenuItemRepository menuItemRepository;
     private final BillDiscountService billDiscountService;
+    private final CommitteeMemberService committeeMemberService;
 
     public PaymentController(BillRepository billRepository, MenuItemRepository menuItemRepository,
-            BillDiscountService billDiscountService) {
+            BillDiscountService billDiscountService, CommitteeMemberService committeeMemberService) {
         this.billRepository = billRepository;
         this.menuItemRepository = menuItemRepository;
         this.billDiscountService = billDiscountService;
+        this.committeeMemberService = committeeMemberService;
     }
 
     @PostMapping
@@ -45,6 +49,8 @@ public class PaymentController {
     public ResponseEntity<PaidOrderResponse> createPayment(@Valid @RequestBody PaymentRequest request) {
         var bill = billRepository.findByOpenTableName(request.tableName())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Open order not found"));
+        bill.setCommitteeDiscountPercent(committeeMemberService.resolveDiscount(
+                bill.getTableName(), null, bill.getCommitteeDiscountPercent()));
         var openOrderLines = List.copyOf(bill.getLines());
         if (openOrderLines.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Open order has no items");
@@ -73,9 +79,27 @@ public class PaymentController {
         }
         var discountableSubtotal = bill.getDiscountableSubtotal();
         var discount = billDiscountService.calculateDiscount(discountableSubtotal);
-        bill.applyDiscountPercent(discount.percent(), discountableSubtotal);
+        bill.applyDiscountPercent(
+                bill.getCommitteeDiscountPercent() == null ? discount.percent() : bill.getCommitteeDiscountPercent(),
+                discountableSubtotal);
 
-        bill.markPaid(request.paymentMethod(), Instant.now());
+        var cashAmount = request.paymentMethod() == PaymentMethod.CASH ? bill.getTotal() : BigDecimal.ZERO;
+        var onlineAmount = request.paymentMethod() == PaymentMethod.ONLINE ? bill.getTotal() : BigDecimal.ZERO;
+        if (request.paymentMethod() == PaymentMethod.SPLIT) {
+            cashAmount = request.cashAmount();
+            onlineAmount = request.onlineAmount();
+            if (cashAmount == null || onlineAmount == null || cashAmount.signum() <= 0 || onlineAmount.signum() <= 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Enter positive cash and online amounts for a split payment");
+            }
+        }
+        if (cashAmount.add(onlineAmount).compareTo(bill.getTotal()) != 0
+                || (request.cashAmount() != null && cashAmount.compareTo(request.cashAmount()) != 0)
+                || (request.onlineAmount() != null && onlineAmount.compareTo(request.onlineAmount()) != 0)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cash and online amounts must add up to the bill total");
+        }
+        bill.markPaid(request.paymentMethod(), Instant.now(), cashAmount, onlineAmount);
 
         var savedBill = billRepository.save(bill);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(savedBill));
@@ -86,12 +110,17 @@ public class PaymentController {
                 bill.getId(),
                 bill.getBillNumber(),
                 bill.getTableName(),
+                bill.getTableLabel(),
+                bill.getOrderDescription(),
+                bill.getCustomerName(),
                 bill.getPaymentMethod(),
                 bill.getPaidAt(),
                 bill.getSubtotal(),
                 bill.getDiscountPercent(),
                 bill.getDiscountAmount(),
                 bill.getTotal(),
+                bill.getCashAmount(),
+                bill.getOnlineAmount(),
                 bill.getLines().stream()
                         .map(line -> new PaidOrderResponse.PaidOrderLineResponse(
                                 line.getDisplayName(),
@@ -109,7 +138,9 @@ public class PaymentController {
     }
 
     public record PaymentRequest(
-            @NotBlank @Size(max = 30) @Pattern(regexp = "(?:Table|Outdoor) [1-9][0-9]*") String tableName,
-            @NotNull PaymentMethod paymentMethod) {
+            @NotBlank @Size(max = 30) @Pattern(regexp = "(?:(?:Table|Outdoor) [1-9][0-9]*|Committee .{1,20})") String tableName,
+            @NotNull PaymentMethod paymentMethod,
+            @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal cashAmount,
+            @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal onlineAmount) {
     }
 }

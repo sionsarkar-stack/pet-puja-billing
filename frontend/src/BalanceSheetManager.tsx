@@ -172,9 +172,10 @@ function BalanceSheetManager() {
         const exportedRefunds = getRefundEntries(paidOrders)
             .filter((refundEntry) => isWithinDateRange(refundEntry.refund.refundedAt, dateRange))
         const exportedExpenses = expenses.filter((expense) => isWithinDateRange(expense.createdAt, dateRange))
-        const profits = exportedPaidOrders.reduce((total, paidOrder) => total + paidOrder.total, 0)
+        const revenue = exportedPaidOrders.reduce((total, paidOrder) => total + paidOrder.total, 0)
         const refundTotal = exportedRefunds.reduce((total, refundEntry) => total + refundEntry.refund.amount, 0)
         const expenseTotal = exportedExpenses.reduce((total, expense) => total + expense.amount, 0)
+        const profits = revenue - refundTotal - expenseTotal
         const report = new jsPDF({ format: 'a4', unit: 'pt' })
 
         report.setFontSize(20)
@@ -206,10 +207,10 @@ function BalanceSheetManager() {
         }
 
         addSection('Summary')
-        addRow('Profits', `INR ${profits.toFixed(2)}`)
+        addRow('Revenue', `INR ${revenue.toFixed(2)}`)
         addRow('Refunds', `-INR ${refundTotal.toFixed(2)}`)
         addRow('Expenses', `INR ${expenseTotal.toFixed(2)}`)
-        addRow('Revenue', `INR ${(profits - refundTotal - expenseTotal).toFixed(2)}`)
+        addRow('Profits', `INR ${profits.toFixed(2)}`)
 
         cursorY += 12
         addSection('Paid orders')
@@ -263,7 +264,7 @@ function BalanceSheetManager() {
                     <p className="eyebrow">Balance sheet</p>
                     <h1>Financial position</h1>
                 </div>
-                <p>Paid orders less recorded expenses give the current revenue.</p>
+                <p>Revenue is paid sales; profits are revenue less refunds and recorded expenses.</p>
             </header>
 
             {isLoading && <p className="financial-empty">Loading balance sheet...</p>}
@@ -275,7 +276,7 @@ function BalanceSheetManager() {
                         <section className="financial-metric financial-metric-profit">
                             <p>Profits</p>
                             <strong>{currencyFormatter.format(balanceSheet.profits)}</strong>
-                            <span>Paid orders</span>
+                            <span>Revenue less refunds and expenses</span>
                         </section>
                         <section className="financial-metric financial-metric-refund">
                             <p>Refunds</p>
@@ -290,7 +291,7 @@ function BalanceSheetManager() {
                         <section className="financial-metric financial-metric-revenue">
                             <p>Revenue</p>
                             <strong>{currencyFormatter.format(balanceSheet.revenue)}</strong>
-                            <span>Profits minus expenses</span>
+                            <span>Paid order sales</span>
                         </section>
                     </section>
 
@@ -331,7 +332,7 @@ function BalanceSheetManager() {
                         <section aria-labelledby="profit-entries-heading" className="financial-list">
                             <header className="financial-list-heading">
                                 <div>
-                                    <p className="eyebrow">Profits</p>
+                                    <p className="eyebrow">Revenue</p>
                                     <h2 id="profit-entries-heading">Paid order entries</h2>
                                 </div>
                                 <span>{paidOrders.length} {paidOrders.length === 1 ? 'order' : 'orders'}</span>
@@ -341,13 +342,13 @@ function BalanceSheetManager() {
                                 <p className="financial-empty">No paid orders yet.</p>
                             ) : (
                                 <div className="financial-table-wrap balance-table-wrap">
-                                    <table aria-label="Paid profit entries" className="financial-table balance-table">
+                                    <table aria-label="Paid revenue entries" className="financial-table balance-table">
                                         <thead>
                                             <tr>
                                                 <th scope="col">Date</th>
                                                 <th scope="col">Seating</th>
                                                 <th scope="col">Paid by</th>
-                                                <th scope="col">Profit</th>
+                                                <th scope="col">Revenue</th>
                                             </tr>
                                         </thead>
                                         <tbody>

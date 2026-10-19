@@ -8,12 +8,17 @@ public record PaidOrderResponse(
                 Long id,
                 String billNumber,
                 String tableName,
+                String tableLabel,
+                String orderDescription,
+                String customerName,
                 PaymentMethod paymentMethod,
                 Instant paidAt,
                 BigDecimal subtotal,
                 BigDecimal discountPercent,
                 BigDecimal discountAmount,
                 BigDecimal total,
+                BigDecimal cashAmount,
+                BigDecimal onlineAmount,
                 List<PaidOrderLineResponse> lines,
                 BillRefundResponse refund) {
 

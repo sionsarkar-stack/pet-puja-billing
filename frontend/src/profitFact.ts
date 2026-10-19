@@ -3,9 +3,15 @@ import { getBusinessDayStart, shiftCalendarDate } from './businessDay'
 
 export type ProfitPeriod = 'day' | 'month' | 'quarter' | 'all'
 
-export type SectionProfit = {
+export type SectionRevenue = {
     amount: number
     section: string
+}
+
+export type FoodRevenue = {
+    amount: number
+    itemName: string
+    quantity: number
 }
 
 export type ProfitDateRange = {
@@ -70,12 +76,12 @@ export function getPeriodLabel(period: ProfitPeriod, selectedDate: string) {
     return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`
 }
 
-export function getSectionProfits(
+export function getSectionRevenue(
     paidOrders: PaidOrder[],
     period: ProfitPeriod,
     selectedDate: string,
     now: Date,
-): SectionProfit[] {
+): SectionRevenue[] {
     const range = getProfitDateRange(period, selectedDate, now)
     const amountsBySection = new Map<string, number>()
 
@@ -101,4 +107,41 @@ export function getSectionProfits(
     return [...amountsBySection.entries()]
         .map(([section, amount]) => ({ amount, section }))
         .sort((left, right) => right.amount - left.amount || left.section.localeCompare(right.section))
+}
+
+export function getFoodRevenue(
+    paidOrders: PaidOrder[],
+    period: ProfitPeriod,
+    selectedDate: string,
+    now: Date,
+): FoodRevenue[] {
+    const range = getProfitDateRange(period, selectedDate, now)
+    const totalsByItem = new Map<string, { amount: number; quantity: number }>()
+
+    for (const paidOrder of paidOrders) {
+        const paidAt = new Date(paidOrder.paidAt)
+        if (Number.isNaN(paidAt.getTime())
+            || (range.start !== null && paidAt < range.start)
+            || paidAt > range.end) {
+            continue
+        }
+
+        const lineTotal = paidOrder.lines.reduce((total, line) => total + Math.max(0, line.lineTotal), 0)
+        if (lineTotal <= 0) continue
+
+        const netPaidAmount = Math.max(0, paidOrder.total - (paidOrder.refund?.amount ?? 0))
+        for (const line of paidOrder.lines) {
+            const itemName = line.itemName.trim() || 'Unnamed item'
+            const share = Math.max(0, line.lineTotal) / lineTotal
+            const currentTotals = totalsByItem.get(itemName) ?? { amount: 0, quantity: 0 }
+            totalsByItem.set(itemName, {
+                amount: currentTotals.amount + netPaidAmount * share,
+                quantity: currentTotals.quantity + Math.max(0, line.quantity),
+            })
+        }
+    }
+
+    return [...totalsByItem.entries()]
+        .map(([itemName, totals]) => ({ ...totals, itemName }))
+        .sort((left, right) => right.amount - left.amount || left.itemName.localeCompare(right.itemName))
 }

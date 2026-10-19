@@ -40,6 +40,7 @@ public class MenuController {
             "Beverages", List.of("Hot Beverages", "Cold Beverages"),
             "Continental", List.of("Starters", "Sandwiches", "Pizza", "Pasta"),
             "Chinese", List.of("Noodles & Rice", "Main Course", "Starters"),
+            "Combo", List.of(),
             "Other", List.of());
 
     private final MenuItemRepository menuItemRepository;
@@ -67,6 +68,7 @@ public class MenuController {
                 request.discountApplied(),
                 request.price());
         replaceAddOns(menuItem, request.addOns());
+        replaceComboItems(menuItem, request.comboItemIds());
         var savedMenuItem = menuItemRepository.save(menuItem);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(savedMenuItem));
@@ -78,6 +80,10 @@ public class MenuController {
             @PathVariable long menuItemId,
             @Valid @RequestBody MenuItemRequest request) {
         var menuItem = findMenuItem(menuItemId);
+        if ("Combo".equals(request.section()) && !"Combo".equals(menuItem.getSection())
+                && isComboComponent(menuItemId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This item is used in a combo");
+        }
         menuItem.update(
                 request.name().trim(),
                 normalizeDescription(request.description()),
@@ -86,14 +92,46 @@ public class MenuController {
                 request.discountApplied(),
                 request.price());
         replaceAddOns(menuItem, request.addOns());
+        replaceComboItems(menuItem, request.comboItemIds());
 
         return toResponse(menuItemRepository.save(menuItem));
     }
 
     @DeleteMapping("/{menuItemId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
     public void deleteMenuItem(@PathVariable long menuItemId) {
+        if (isComboComponent(menuItemId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Remove this item from its combos before deleting it");
+        }
         menuItemRepository.delete(findMenuItem(menuItemId));
+    }
+
+    private boolean isComboComponent(long menuItemId) {
+        return menuItemRepository.existsByAvailableTrueAndComboItems_Id(menuItemId);
+    }
+
+    private void replaceComboItems(MenuItem menuItem, List<Long> requestedIds) {
+        if (!"Combo".equals(menuItem.getSection())) {
+            if (!requestedIds.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only combos can contain menu items");
+            }
+            menuItem.getComboItems().clear();
+            return;
+        }
+        if (requestedIds.isEmpty() || requestedIds.stream().distinct().count() != requestedIds.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select distinct items for this combo");
+        }
+        var components = requestedIds.stream().map(id -> menuItemRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Combo item not found")))
+                .toList();
+        if (components.stream().anyMatch(item -> !item.isAvailable() || "Combo".equals(item.getSection())
+                || item.getId().equals(menuItem.getId()))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose existing non-combo menu items");
+        }
+        menuItem.getComboItems().clear();
+        menuItem.getComboItems().addAll(components);
     }
 
     private MenuItem findMenuItem(long menuItemId) {
@@ -163,6 +201,9 @@ public class MenuController {
                 menuItem.getPrice(),
                 menuItem.getAddOns().stream()
                         .map(addOn -> new MenuAddOnResponse(addOn.getId(), addOn.getName(), addOn.getPrice()))
+                        .toList(),
+                menuItem.getComboItems().stream()
+                        .map(item -> new ComboItemResponse(item.getId(), item.getName()))
                         .toList());
     }
 
@@ -173,11 +214,13 @@ public class MenuController {
             @Size(max = 60) String subsection,
             @NotNull @DecimalMin("0.00") @DecimalMax("100.00") @Digits(integer = 3, fraction = 2) BigDecimal discountApplied,
             @NotNull @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal price,
-            @NotNull @Size(max = 20) List<@Valid MenuAddOnRequest> addOns) {
+            @NotNull @Size(max = 20) List<@Valid MenuAddOnRequest> addOns,
+            @Size(max = 100) List<@NotNull @jakarta.validation.constraints.Positive Long> comboItemIds) {
         public MenuItemRequest {
             section = normalizeSection(section);
             subsection = subsection == null ? "" : subsection.trim();
             addOns = addOns == null ? List.of() : List.copyOf(addOns);
+            comboItemIds = comboItemIds == null ? List.of() : comboItemIds;
         }
     }
 
@@ -195,7 +238,11 @@ public class MenuController {
             String subsection,
             BigDecimal discountApplied,
             BigDecimal price,
-            List<MenuAddOnResponse> addOns) {
+            List<MenuAddOnResponse> addOns,
+            List<ComboItemResponse> comboItems) {
+    }
+
+    public record ComboItemResponse(Long id, String name) {
     }
 
     public record MenuAddOnResponse(

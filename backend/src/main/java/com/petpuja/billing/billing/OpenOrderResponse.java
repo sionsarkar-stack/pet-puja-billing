@@ -1,10 +1,17 @@
 package com.petpuja.billing.billing;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 public record OpenOrderResponse(
                 String tableName,
+                String tableLabel,
+                String orderDescription,
+                BigDecimal committeeDiscountPercent,
+                String customerName,
+                String customerPhone,
+                LocalDate customerDateOfBirth,
                 BigDecimal subtotal,
                 BigDecimal discountPercent,
                 BigDecimal discountAmount,
@@ -15,6 +22,7 @@ public record OpenOrderResponse(
         public record OpenOrderLineResponse(
                         long menuItemId,
                         String itemName,
+                        String section,
                         int quantity,
                         BigDecimal unitPrice,
                         BigDecimal lineTotal,

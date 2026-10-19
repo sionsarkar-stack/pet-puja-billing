@@ -3,6 +3,7 @@ package com.petpuja.billing.billing;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,6 +20,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
@@ -61,12 +64,37 @@ public class Bill {
 	@Column(name = "table_name", length = 30)
 	private String tableName;
 
+	@Column(name = "table_label", length = 100)
+	private String tableLabel;
+
+	@Column(name = "order_description", length = 500)
+	private String orderDescription;
+
+	@Column(name = "committee_discount_percent", precision = 5, scale = 2)
+	private BigDecimal committeeDiscountPercent;
+
+	@Column(name = "customer_name", length = 100)
+	private String customerName;
+
+	@Column(name = "customer_date_of_birth")
+	private LocalDate customerDateOfBirth;
+
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "customer_phone")
+	private Customer customer;
+
 	@Column(name = "open_table_name", length = 30, unique = true)
 	private String openTableName;
 
 	@Enumerated(EnumType.STRING)
 	@Column(name = "payment_method", length = 20)
 	private PaymentMethod paymentMethod;
+
+	@Column(name = "cash_amount", precision = 12, scale = 2)
+	private BigDecimal cashAmount;
+
+	@Column(name = "online_amount", precision = 12, scale = 2)
+	private BigDecimal onlineAmount;
 
 	@Column(name = "paid_at")
 	private Instant paidAt;
@@ -107,6 +135,9 @@ public class Bill {
 		bill.openTableName = tableName;
 		bill.status = BillStatus.OPEN;
 		bill.tableName = tableName;
+		if (tableName.startsWith("Committee ")) {
+			bill.committeeDiscountPercent = BigDecimal.ZERO;
+		}
 		return bill;
 	}
 
@@ -129,6 +160,9 @@ public class Bill {
 	}
 
 	public BigDecimal getDiscountableSubtotal() {
+		if (tableName != null && tableName.startsWith("Committee ")) {
+			return subtotal;
+		}
 		var discountableSubtotal = BigDecimal.ZERO;
 		for (var line : lines) {
 			if (!line.isOtherSection()) {
@@ -158,9 +192,17 @@ public class Bill {
 	}
 
 	public void markPaid(PaymentMethod paymentMethod, Instant paidAt) {
+		markPaid(paymentMethod, paidAt,
+				paymentMethod == PaymentMethod.CASH ? total : BigDecimal.ZERO,
+				paymentMethod == PaymentMethod.ONLINE ? total : BigDecimal.ZERO);
+	}
+
+	public void markPaid(PaymentMethod paymentMethod, Instant paidAt, BigDecimal cashAmount, BigDecimal onlineAmount) {
 		this.openTableName = null;
 		this.paidAt = paidAt;
 		this.paymentMethod = paymentMethod;
+		this.cashAmount = cashAmount;
+		this.onlineAmount = onlineAmount;
 		this.status = BillStatus.PAID;
 	}
 
@@ -170,6 +212,10 @@ public class Bill {
 
 	public void reopen() {
 		completedAt = null;
+	}
+
+	public void setCustomerName(String customerName) {
+		this.customerName = customerName == null || customerName.isBlank() ? null : customerName.strip();
 	}
 
 	void recordRefund(BillRefund refund) {
@@ -204,6 +250,14 @@ public class Bill {
 		return paymentMethod;
 	}
 
+	public BigDecimal getCashAmount() {
+		return cashAmount == null ? paymentMethod == PaymentMethod.CASH ? total : BigDecimal.ZERO : cashAmount;
+	}
+
+	public BigDecimal getOnlineAmount() {
+		return onlineAmount == null ? paymentMethod == PaymentMethod.ONLINE ? total : BigDecimal.ZERO : onlineAmount;
+	}
+
 	public Instant getPaidAt() {
 		return paidAt;
 	}
@@ -214,6 +268,52 @@ public class Bill {
 
 	public String getTableName() {
 		return tableName == null ? "Table " + tableNumber : tableName;
+	}
+
+	public String getCustomerName() {
+		return customerName;
+	}
+
+	public String getTableLabel() {
+		return tableLabel;
+	}
+
+	public String getOrderDescription() {
+		return orderDescription;
+	}
+
+	public BigDecimal getCommitteeDiscountPercent() {
+		return committeeDiscountPercent;
+	}
+
+	public void setCommitteeDiscountPercent(BigDecimal committeeDiscountPercent) {
+		this.committeeDiscountPercent = committeeDiscountPercent;
+	}
+
+	public void setTableLabel(String tableLabel) {
+		this.tableLabel = tableLabel == null || tableLabel.isBlank() ? null : tableLabel.strip();
+	}
+
+	public void setOrderDescription(String orderDescription) {
+		this.orderDescription = orderDescription == null || orderDescription.isBlank()
+				? null
+				: orderDescription.strip();
+	}
+
+	public LocalDate getCustomerDateOfBirth() {
+		return customerDateOfBirth;
+	}
+
+	public void setCustomerDateOfBirth(LocalDate customerDateOfBirth) {
+		this.customerDateOfBirth = customerDateOfBirth;
+	}
+
+	public Customer getCustomer() {
+		return customer;
+	}
+
+	public void setCustomer(Customer customer) {
+		this.customer = customer;
 	}
 
 	public boolean isCompleted() {

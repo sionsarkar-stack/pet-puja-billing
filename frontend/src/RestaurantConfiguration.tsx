@@ -3,11 +3,13 @@ import { createContext, useContext } from 'react'
 export type RestaurantConfiguration = {
     restaurantName: string
     upiVpa: string
+    secondaryUpiVpa?: string
 }
 
 export const defaultRestaurantConfiguration: RestaurantConfiguration = {
     restaurantName: 'Restaurant',
     upiVpa: '',
+    secondaryUpiVpa: '',
 }
 
 export const RestaurantConfigurationContext = createContext(defaultRestaurantConfiguration)

@@ -72,7 +72,7 @@ public class DailyClosing {
         this.profits = profits;
         this.refunds = refunds;
         this.expenses = expenses;
-        this.revenue = profits.subtract(refunds).subtract(expenses);
+        this.revenue = cashSales.add(onlineSales);
         this.paidOrderCount = paidOrderCount;
         this.expenseCount = expenseCount;
         this.startedAt = startedAt;

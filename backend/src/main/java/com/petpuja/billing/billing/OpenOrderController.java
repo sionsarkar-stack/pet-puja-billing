@@ -1,6 +1,7 @@
 package com.petpuja.billing.billing;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,7 +31,11 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
@@ -42,12 +47,17 @@ public class OpenOrderController {
     private final BillRepository billRepository;
     private final MenuItemRepository menuItemRepository;
     private final BillDiscountService billDiscountService;
+    private final CustomerService customerService;
+    private final CommitteeMemberService committeeMemberService;
 
     public OpenOrderController(BillRepository billRepository, MenuItemRepository menuItemRepository,
-            BillDiscountService billDiscountService) {
+            BillDiscountService billDiscountService, CustomerService customerService,
+            CommitteeMemberService committeeMemberService) {
         this.billRepository = billRepository;
         this.menuItemRepository = menuItemRepository;
         this.billDiscountService = billDiscountService;
+        this.customerService = customerService;
+        this.committeeMemberService = committeeMemberService;
     }
 
     @GetMapping
@@ -61,8 +71,13 @@ public class OpenOrderController {
     @PutMapping
     @Transactional
     public ResponseEntity<OpenOrderResponse> saveOpenOrder(@Valid @RequestBody OpenOrderRequest request) {
+        var bill = billRepository.findByOpenTableName(request.tableName())
+                .orElseGet(() -> Bill.createOpen("PP-" + UUID.randomUUID(), request.tableName()));
+        bill.setCommitteeDiscountPercent(committeeMemberService.resolveDiscount(
+                request.tableName(), request.committeeDiscountPercent(), bill.getCommitteeDiscountPercent()));
         if (request.lines().isEmpty()) {
-            billRepository.findByOpenTableName(request.tableName()).ifPresent(billRepository::delete);
+            if (bill.getId() != null)
+                billRepository.delete(bill);
             return ResponseEntity.noContent().build();
         }
 
@@ -85,8 +100,16 @@ public class OpenOrderController {
             addOnsByLine.putIfAbsent(key, selectedAddOns);
         }
 
-        var bill = billRepository.findByOpenTableName(request.tableName())
-                .orElseGet(() -> Bill.createOpen("PP-" + UUID.randomUUID(), request.tableName()));
+        if (request.tableLabel() != null) {
+            bill.setTableLabel(request.tableLabel());
+        }
+        if (request.orderDescription() != null) {
+            bill.setOrderDescription(request.orderDescription());
+        }
+        bill.setCustomerName(request.customerName());
+        bill.setCustomerDateOfBirth(request.customerDateOfBirth());
+        bill.setCustomer(customerService.saveOrderDetails(
+                request.customerPhone(), request.customerName(), request.customerDateOfBirth()));
         bill.clearLines();
 
         for (var entry : quantitiesByLine.entrySet()) {
@@ -102,7 +125,9 @@ public class OpenOrderController {
         }
         var discountableSubtotal = bill.getDiscountableSubtotal();
         var discount = billDiscountService.calculateDiscount(discountableSubtotal);
-        bill.applyDiscountPercent(discount.percent(), discountableSubtotal);
+        bill.applyDiscountPercent(
+                bill.getCommitteeDiscountPercent() == null ? discount.percent() : bill.getCommitteeDiscountPercent(),
+                discountableSubtotal);
 
         if (request.completed()) {
             bill.markCompleted(Instant.now());
@@ -116,6 +141,12 @@ public class OpenOrderController {
     private static OpenOrderResponse toResponse(Bill bill) {
         return new OpenOrderResponse(
                 bill.getTableName(),
+                bill.getTableLabel(),
+                bill.getOrderDescription(),
+                bill.getCommitteeDiscountPercent(),
+                bill.getCustomerName(),
+                bill.getCustomer() == null ? null : bill.getCustomer().getPhoneNumber(),
+                bill.getCustomerDateOfBirth(),
                 bill.getSubtotal(),
                 bill.getDiscountPercent(),
                 bill.getDiscountAmount(),
@@ -135,6 +166,7 @@ public class OpenOrderController {
         return new OpenOrderResponse.OpenOrderLineResponse(
                 menuItemId,
                 line.getItemName(),
+                line.getSection(),
                 line.getQuantity(),
                 line.getUnitPrice(),
                 line.getLineTotal(),
@@ -173,7 +205,13 @@ public class OpenOrderController {
     }
 
     public record OpenOrderRequest(
-            @NotBlank @Size(max = 30) @Pattern(regexp = "(?:Table|Outdoor) [1-9][0-9]*") String tableName,
+            @NotBlank @Size(max = 30) @Pattern(regexp = "(?:(?:Table|Outdoor) [1-9][0-9]*|Committee .{1,20})") String tableName,
+            @Size(max = 100) String tableLabel,
+            @Size(max = 500) String orderDescription,
+            @DecimalMin("0.00") @DecimalMax("100.00") @Digits(integer = 3, fraction = 2) BigDecimal committeeDiscountPercent,
+            @Size(max = 100) String customerName,
+            @Size(max = 32) String customerPhone,
+            @PastOrPresent LocalDate customerDateOfBirth,
             @NotNull @Size(max = 100) List<@Valid OpenOrderLineRequest> lines,
             boolean completed) {
     }
