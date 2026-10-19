@@ -11,7 +11,7 @@ import {
 type ExpenseDraft = {
     title: string
     amount: string
-    addedBy: string
+    addedBy: AddedByOption | ''
     description: string
 }
 
@@ -20,12 +20,13 @@ type ExpenseMessage = {
     text: string
 }
 
-const addedByOptions = ['Owner', 'Manager', 'Cashier', 'Staff']
+const addedByOptions = ['Rimo', 'Rjoe', 'Rishi', 'Dinda', 'Others'] as const
+type AddedByOption = typeof addedByOptions[number]
 
 const emptyDraft: ExpenseDraft = {
     title: '',
     amount: '',
-    addedBy: 'Owner',
+    addedBy: '',
     description: '',
 }
 
@@ -82,6 +83,10 @@ function ExpensesManager() {
         const amount = Number.parseFloat(draft.amount)
         if (!title || !Number.isFinite(amount) || amount <= 0) {
             setMessage({ tone: 'error', text: 'Enter an expense title and an amount greater than zero.' })
+            return
+        }
+        if (!draft.addedBy) {
+            setMessage({ tone: 'error', text: 'Select who added this expense.' })
             return
         }
 
@@ -162,17 +167,22 @@ function ExpensesManager() {
                         />
                     </div>
 
-                    <div className="field-group">
-                        <label htmlFor="expense-added-by">Added by</label>
-                        <select
-                            disabled={isSaving}
-                            id="expense-added-by"
-                            onChange={(event) => updateDraft('addedBy', event.target.value)}
-                            value={draft.addedBy}
-                        >
-                            {addedByOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                        </select>
-                    </div>
+                    <fieldset aria-required="true" className="expense-added-by" disabled={isSaving}>
+                        <legend>Added by <span aria-hidden="true">*</span></legend>
+                        <div aria-label="Added by" className="expense-added-by-options" role="radiogroup">
+                            {addedByOptions.map((option, index) => <label key={option}>
+                                <input
+                                    checked={draft.addedBy === option}
+                                    name="expense-added-by"
+                                    onChange={() => updateDraft('addedBy', option)}
+                                    required={index === 0}
+                                    type="radio"
+                                    value={option}
+                                />
+                                <span>{option}</span>
+                            </label>)}
+                        </div>
+                    </fieldset>
 
                     <div className="field-group">
                         <label htmlFor="expense-description">Description</label>

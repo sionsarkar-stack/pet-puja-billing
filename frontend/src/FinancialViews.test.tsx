@@ -242,10 +242,15 @@ describe('financial views', () => {
         render(<ExpensesManager />)
 
         await screen.findByRole('heading', { name: 'Expense entries' })
+        expect(within(screen.getByRole('radiogroup', { name: 'Added by' }).parentElement!).getAllByRole('radio').map((radio) => radio.getAttribute('value')))
+            .toEqual(['Rimo', 'Rjoe', 'Rishi', 'Dinda', 'Others'])
         await user.type(screen.getByLabelText('Title'), 'Vegetables')
         await user.type(screen.getByLabelText('Amount (INR)'), '75')
-        await user.selectOptions(screen.getByLabelText('Added by'), 'Cashier')
         await user.type(screen.getByLabelText('Description'), 'Morning market')
+        await user.click(screen.getByRole('button', { name: 'Add expense' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Select who added this expense.')
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        await user.click(screen.getByRole('radio', { name: 'Rjoe' }))
         await user.click(screen.getByRole('button', { name: 'Add expense' }))
 
         expect(fetchMock).toHaveBeenNthCalledWith(
@@ -253,7 +258,7 @@ describe('financial views', () => {
             '/api/expenses',
             expect.objectContaining({
                 body: JSON.stringify({
-                    addedBy: 'Cashier',
+                    addedBy: 'Rjoe',
                     amount: 75,
                     description: 'Morning market',
                     title: 'Vegetables',

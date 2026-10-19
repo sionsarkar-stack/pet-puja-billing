@@ -152,10 +152,18 @@ class FinancialControllerTest {
                                 .content("""
                                                 {"title":"Vegetables","amount":75,"addedBy":"Owner","description":"Morning market"}
                                                 """))
+                                .andExpect(status().isBadRequest());
+
+                mockMvc.perform(post("/api/expenses")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Vegetables","amount":75,"addedBy":"Rimo","description":"Morning market"}
+                                                """))
                                 .andExpect(status().isCreated())
                                 .andExpect(jsonPath("$.title").value("Vegetables"))
                                 .andExpect(jsonPath("$.amount").value(75))
-                                .andExpect(jsonPath("$.addedBy").value("Owner"));
+                                .andExpect(jsonPath("$.addedBy").value("Rimo"));
 
                 mockMvc.perform(get("/api/balance-sheet").session(ownerSession))
                                 .andExpect(status().isOk())
