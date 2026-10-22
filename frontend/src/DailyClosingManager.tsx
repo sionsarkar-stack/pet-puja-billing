@@ -200,19 +200,19 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                             <h2 id="daily-close-action-heading">
                                 {businessDayStatus.active ? businessDayStatus.businessDate : 'No day in progress'}
                             </h2>
+                            {businessDayStatus.active ? (
+                                <button disabled={isPreviewing || isSaving} onClick={() => void previewEndBusinessDay()} type="button">
+                                    {isPreviewing ? 'Preparing review...' : 'End day'}
+                                </button>
+                            ) : (
+                                <button disabled={isSaving} onClick={() => void startBusinessDay()} type="button">
+                                    {isSaving ? 'Starting...' : 'Start day'}
+                                </button>
+                            )}
                             {businessDayStatus.active && businessDayStatus.startedAt && (
                                 <p>Started {formatDateTime(businessDayStatus.startedAt)}</p>
                             )}
                         </div>
-                        {businessDayStatus.active ? (
-                            <button disabled={isPreviewing || isSaving} onClick={() => void previewEndBusinessDay()} type="button">
-                                {isPreviewing ? 'Preparing review...' : 'End day'}
-                            </button>
-                        ) : (
-                            <button disabled={isSaving} onClick={() => void startBusinessDay()} type="button">
-                                {isSaving ? 'Starting...' : 'Start day'}
-                            </button>
-                        )}
                     </section>
 
                     {message && (

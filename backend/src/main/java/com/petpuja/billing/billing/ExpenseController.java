@@ -41,10 +41,19 @@ public class ExpenseController {
 
     @PostMapping
     public ResponseEntity<ExpenseResponse> createExpense(@Valid @RequestBody ExpenseRequest request) {
+        var addedBy = request.addedBy().trim();
+        if ("Others".equals(addedBy)) {
+            if (request.keBhai() == null || request.keBhai().isBlank()) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Enter a name for Others");
+            }
+            addedBy = "Others: " + request.keBhai().trim();
+        }
+
         var savedExpense = expenseRepository.save(Expense.create(
                 request.title().trim(),
                 request.amount(),
-                request.addedBy().trim(),
+                addedBy,
                 normalizeDescription(request.description())));
 
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(savedExpense));
@@ -73,6 +82,7 @@ public class ExpenseController {
             @NotBlank @Size(max = 120) String title,
             @NotNull @DecimalMin("0.01") @Digits(integer = 10, fraction = 2) BigDecimal amount,
             @NotBlank @Pattern(regexp = "Rimo|Rjoe|Rishi|Dinda|Others") String addedBy,
+            @Size(max = 72) String keBhai,
             @Size(max = 500) String description) {
     }
 

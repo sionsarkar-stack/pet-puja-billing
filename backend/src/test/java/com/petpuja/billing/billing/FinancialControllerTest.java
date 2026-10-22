@@ -174,6 +174,28 @@ class FinancialControllerTest {
         }
 
         @Test
+        void requiresAndStoresKeBhaiWhenExpenseAddedByIsOthers() throws Exception {
+                var ownerSession = signIn();
+
+                mockMvc.perform(post("/api/expenses")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Supplies","amount":50,"addedBy":"Others"}
+                                                """))
+                                .andExpect(status().isBadRequest());
+
+                mockMvc.perform(post("/api/expenses")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Supplies","amount":50,"addedBy":"Others","keBhai":" Arun "}
+                                                """))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.addedBy").value("Others: Arun"));
+        }
+
+        @Test
         void createsContactBeforeAnyOrderExists() throws Exception {
                 var ownerSession = signIn();
 

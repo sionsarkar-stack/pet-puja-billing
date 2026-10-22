@@ -8,6 +8,7 @@ import type { UserMode } from './userMode'
 import Workspace from './Workspace'
 import { SplashScreen, Watermark } from './Watermark'
 import { SESSION_EXPIRED_EVENT } from './sessionExpiry'
+import { readThemePreference, saveThemePreference, type ThemePreference } from './theme'
 import './App.css'
 
 type AuthState =
@@ -60,6 +61,7 @@ function isRestaurantConfiguration(value: unknown): value is RestaurantConfigura
 }
 
 function App({ splashDuration = 2000 }: { splashDuration?: number }) {
+  const [theme, setTheme] = useState<ThemePreference>(() => readThemePreference())
   const [authState, setAuthState] = useState<AuthState>({ status: 'checking' })
   const [restaurantConfiguration, setRestaurantConfiguration] = useState<RestaurantConfiguration | null>(null)
   const [username, setUsername] = useState('')
@@ -74,6 +76,12 @@ function App({ splashDuration = 2000 }: { splashDuration?: number }) {
     const timer = window.setTimeout(() => setShowSplash(false), splashDuration)
     return () => window.clearTimeout(timer)
   }, [splashDuration])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    saveThemePreference(theme)
+  }, [theme])
+
   const signedInUsername = authState.status === 'signed-in' ? authState.username : ''
 
   useEffect(() => {
@@ -215,6 +223,8 @@ function App({ splashDuration = 2000 }: { splashDuration?: number }) {
           isLoggingOut={isLoggingOut}
           mode={authState.mode}
           onLogout={handleLogout}
+          onThemeChange={setTheme}
+          theme={theme}
           username={authState.username}
         />
         {sessionExpired && (
@@ -251,7 +261,7 @@ function App({ splashDuration = 2000 }: { splashDuration?: number }) {
       <main className="auth-page">
         <header className="auth-topbar">
           <a className="brand" href="/" aria-label={`${restaurantConfiguration.restaurantName} home`}>
-            <span className="brand-mark"><img alt="" src="/crest.png" /></span>
+            <span aria-hidden="true" className="brand-mark">{restaurantConfiguration.restaurantName.slice(0, 1).toUpperCase()}</span>
             <span>{restaurantConfiguration.restaurantName}</span>
           </a>
           <span className="owner-badge">Team access</span>

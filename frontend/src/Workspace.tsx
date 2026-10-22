@@ -13,11 +13,14 @@ import TableManager from './TableManager'
 import { useStackedTables } from './stackedTables'
 import { Watermark } from './Watermark'
 import { apiBaseUrl, isBusinessDayStatus, type BusinessDayStatus } from './financial'
+import type { ThemePreference } from './theme'
 
 type WorkspaceProps = {
     isLoggingOut: boolean
     mode: UserMode
     onLogout: () => Promise<void>
+    onThemeChange: (theme: ThemePreference) => void
+    theme: ThemePreference
     username: string
 }
 
@@ -38,16 +41,9 @@ const tabs: Array<{ id: WorkspaceTab; label: string }> = [
 const bannerImages: Array<{ position: string; src: string }> = [
     { src: '/players/manchester-united.png', position: 'center' },
     { src: '/players/messi.jpg', position: 'center 20%' },
-    { src: '/players/rooney.webp', position: 'center 18%' },
-    { src: '/players/manchester-united.jpg', position: 'center' },
-    { src: '/players/Lion_quote_2.webp', position: 'center' },
-    { src: '/players/lion_quote.webp', position: 'center' },
-    { src: '/players/Sachin.jpg', position: 'center' },
-    { src: '/players/netaji.jpeg', position: 'center' },
-    { src: '/players/Introdcution_statement.png', position: 'center' },
 ]
 
-function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
+function Workspace({ isLoggingOut, mode, onLogout, onThemeChange, theme, username }: WorkspaceProps) {
     const { restaurantName } = useRestaurantConfiguration()
     const [activeTab, setActiveTab] = useState<WorkspaceTab>(() => mode === 'ADMIN' ? 'daily-close' : 'menu')
     const [businessDayStatus, setBusinessDayStatus] = useState<BusinessDayStatus>({
@@ -57,12 +53,13 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
     })
     const [businessDayStatusLoaded, setBusinessDayStatusLoaded] = useState(false)
     const [hasOpenedTable, setHasOpenedTable] = useState(true)
-    const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
     const shellRef = useRef<HTMLDivElement>(null)
     useStackedTables(shellRef)
 
     useEffect(() => {
-        document.getElementById(`tab-${activeTab}`)?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
+        document.querySelectorAll(`#desktop-tab-${activeTab}, #mobile-tab-${activeTab}`).forEach((tab) => {
+            tab.scrollIntoView?.({ block: 'nearest', inline: 'center' })
+        })
     }, [activeTab])
     const [backupAvailable, setBackupAvailable] = useState(true)
 
@@ -129,6 +126,9 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
     const visibleTabs = mode === 'ADMIN'
         ? tabs.filter((tab) => tab.id !== 'backup' || backupAvailable)
         : tabs.filter((tab) => tab.id === 'table' || tab.id === 'menu' || tab.id === 'history')
+    const primaryTabs = visibleTabs.filter((tab) => tab.id === 'table' || tab.id === 'menu' || tab.id === 'history')
+    const moreTabs = visibleTabs.filter((tab) => !primaryTabs.includes(tab))
+    const activeMoreTab = moreTabs.find((tab) => tab.id === activeTab)
 
     function isTabDisabled(tab: WorkspaceTab) {
         return tab === 'table' && (!businessDayStatusLoaded || !businessDayStatus.active)
@@ -142,11 +142,15 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         }
     }
 
-    function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, tabIndex: number) {
+    function handleTabKeyDown(
+        event: KeyboardEvent<HTMLButtonElement>,
+        tabList: typeof visibleTabs,
+        tabIndex: number,
+    ) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
 
         event.preventDefault()
-        const enabledTabs = visibleTabs
+        const enabledTabs = tabList
             .map((tab, index) => ({ tab, index }))
             .filter(({ tab }) => !isTabDisabled(tab.id))
         const currentEnabledIndex = enabledTabs.findIndex(({ index }) => index === tabIndex)
@@ -160,7 +164,43 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         const nextTab = enabledTabs[nextEnabledIndex]
 
         selectTab(nextTab.tab.id)
-        tabButtonRefs.current[nextTab.index]?.focus()
+        const tabButtons = event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+        tabButtons?.[nextTab.index]?.focus()
+    }
+
+    function renderTab(
+        tab: typeof visibleTabs[number],
+        idPrefix: string,
+        tabList: typeof visibleTabs,
+        closeMoreMenu = false,
+    ) {
+        const tabIndex = tabList.indexOf(tab)
+        return (
+            <button
+                aria-controls={`panel-${tab.id}`}
+                aria-selected={activeTab === tab.id}
+                disabled={isTabDisabled(tab.id)}
+                id={`${idPrefix}-tab-${tab.id}`}
+                key={tab.id}
+                onClick={(event) => {
+                    selectTab(tab.id)
+                    if (closeMoreMenu) {
+                        const moreMenu = event.currentTarget.closest('details')
+                        if (moreMenu) {
+                            moreMenu.removeAttribute('open')
+                            moreMenu.querySelector('summary')?.focus()
+                        }
+                    }
+                }}
+                onKeyDown={(event) => handleTabKeyDown(event, tabList, tabIndex)}
+                role="tab"
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                title={isTabDisabled(tab.id) ? 'Start a business day before opening tables' : undefined}
+                type="button"
+            >
+                {tab.label}
+            </button>
+        )
     }
 
     function handleBusinessDayStatusChange(status: BusinessDayStatus) {
@@ -173,7 +213,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
         <main className="workspace-page">
             <header className="workspace-header">
                 <a className="brand" href="/" aria-label={`${restaurantName} home`}>
-                    <span className="brand-mark"><img alt="" src="/crest.png" /></span>
+                    <span aria-hidden="true" className="brand-mark">{restaurantName.slice(0, 1).toUpperCase()}</span>
                     <span>{restaurantName}</span>
                 </a>
 
@@ -213,43 +253,42 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
                     ))}
                     <span className="banner-title">{restaurantName}</span>
                 </div>
-                <nav aria-label="Restaurant management" className="workspace-tabs" role="tablist">
-                    {visibleTabs.map((tab, index) => (
-                        <button
-                            aria-controls={`panel-${tab.id}`}
-                            aria-selected={activeTab === tab.id}
-                            disabled={isTabDisabled(tab.id)}
-                            id={`tab-${tab.id}`}
-                            key={tab.id}
-                            onClick={() => selectTab(tab.id)}
-                            onKeyDown={(event) => handleTabKeyDown(event, index)}
-                            ref={(element) => {
-                                tabButtonRefs.current[index] = element
-                            }}
-                            role="tab"
-                            tabIndex={activeTab === tab.id ? 0 : -1}
-                            title={isTabDisabled(tab.id) ? 'Start a business day before opening tables' : undefined}
-                            type="button"
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
+                <nav aria-label="Restaurant management" className="workspace-tabs workspace-tabs-desktop" role="tablist">
+                    {visibleTabs.map((tab) => renderTab(tab, 'desktop', visibleTabs))}
+                </nav>
+                <nav aria-label="Restaurant management on mobile" className="workspace-tabs workspace-tabs-mobile">
+                    <div aria-label="Primary sections" className="workspace-tabs-primary" role="tablist">
+                        {primaryTabs.map((tab) => renderTab(tab, 'mobile', primaryTabs))}
+                    </div>
+                    {moreTabs.length > 0 && (
+                        <details className="workspace-more">
+                            <summary
+                                aria-label={activeMoreTab ? `More sections, ${activeMoreTab.label} selected` : 'More sections'}
+                                data-has-active={activeMoreTab ? 'true' : 'false'}
+                            >
+                                More
+                            </summary>
+                            <div aria-label="More sections" className="workspace-more-menu" role="tablist">
+                                {moreTabs.map((tab) => renderTab(tab, 'mobile', moreTabs, true))}
+                            </div>
+                        </details>
+                    )}
                 </nav>
 
                 {activeTab === 'menu' && (
                     <section
-                        aria-labelledby="tab-menu"
+                        aria-label="Details"
                         className="workspace-content"
                         id="panel-menu"
                         role="tabpanel"
                     >
-                        <DetailsManager mode={mode} />
+                        <DetailsManager mode={mode} onThemeChange={onThemeChange} theme={theme} />
                     </section>
                 )}
 
                 {hasOpenedTable && (
                     <section
-                        aria-labelledby="tab-table"
+                        aria-label="Table"
                         className="workspace-content"
                         hidden={activeTab !== 'table'}
                         id="panel-table"
@@ -261,7 +300,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'history' && (
                     <section
-                        aria-labelledby="tab-history"
+                        aria-label="History"
                         className="workspace-content"
                         id="panel-history"
                         role="tabpanel"
@@ -272,7 +311,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'customers' && mode === 'ADMIN' && (
                     <section
-                        aria-labelledby="tab-customers"
+                        aria-label="Customer details"
                         className="workspace-content"
                         id="panel-customers"
                         role="tabpanel"
@@ -283,7 +322,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'expenses' && (
                     <section
-                        aria-labelledby="tab-expenses"
+                        aria-label="Expenses"
                         className="workspace-content"
                         id="panel-expenses"
                         role="tabpanel"
@@ -294,7 +333,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'balance-sheet' && (
                     <section
-                        aria-labelledby="tab-balance-sheet"
+                        aria-label="Balance sheet"
                         className="workspace-content"
                         id="panel-balance-sheet"
                         role="tabpanel"
@@ -305,7 +344,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'profit-fact' && (
                     <section
-                        aria-labelledby="tab-profit-fact"
+                        aria-label="Revenue"
                         className="workspace-content"
                         id="panel-profit-fact"
                         role="tabpanel"
@@ -316,7 +355,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'daily-close' && (
                     <section
-                        aria-labelledby="tab-daily-close"
+                        aria-label="Daily start/close"
                         className="workspace-content"
                         id="panel-daily-close"
                         role="tabpanel"
@@ -330,7 +369,7 @@ function Workspace({ isLoggingOut, mode, onLogout, username }: WorkspaceProps) {
 
                 {activeTab === 'backup' && (
                     <section
-                        aria-labelledby="tab-backup"
+                        aria-label="Backup"
                         className="workspace-content"
                         id="panel-backup"
                         role="tabpanel"

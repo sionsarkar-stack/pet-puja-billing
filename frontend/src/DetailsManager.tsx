@@ -2,15 +2,25 @@ import { type KeyboardEvent, useRef, useState } from 'react'
 import type { UserMode } from './userMode'
 import DiscountManager from './DiscountManager'
 import MenuManager from './MenuManager'
+import type { ThemePreference } from './theme'
 
-type DetailsView = 'menu' | 'discount'
+type DetailsView = 'menu' | 'discount' | 'theme'
 
 const views: Array<{ id: DetailsView; label: string }> = [
     { id: 'menu', label: 'Menu' },
     { id: 'discount', label: 'Discount' },
+    { id: 'theme', label: 'Theme' },
 ]
 
-function DetailsManager({ mode }: { mode: UserMode }) {
+function DetailsManager({
+    mode,
+    onThemeChange,
+    theme,
+}: {
+    mode: UserMode
+    onThemeChange: (theme: ThemePreference) => void
+    theme: ThemePreference
+}) {
     const [activeView, setActiveView] = useState<DetailsView>('menu')
     const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
@@ -55,6 +65,35 @@ function DetailsManager({ mode }: { mode: UserMode }) {
             {activeView === 'discount' && (
                 <section aria-labelledby="details-tab-discount" className="details-panel" id="details-panel-discount" role="tabpanel">
                     <DiscountManager canManage={mode === 'ADMIN'} />
+                </section>
+            )}
+            {activeView === 'theme' && (
+                <section aria-labelledby="details-tab-theme" className="details-panel theme-settings" id="details-panel-theme" role="tabpanel">
+                    <div className="theme-settings-heading">
+                        <p className="eyebrow">Appearance</p>
+                        <h1>Theme</h1>
+                        <p>Choose the look used across this app on this device.</p>
+                    </div>
+                    <fieldset className="theme-options">
+                        <legend>Color theme</legend>
+                        <div className="theme-option-list" role="radiogroup" aria-label="Color theme">
+                            {(['light', 'dark'] as const).map((option) => (
+                                <label className="theme-option" key={option}>
+                                    <input
+                                        checked={theme === option}
+                                        name="app-theme"
+                                        onChange={() => onThemeChange(option)}
+                                        type="radio"
+                                        value={option}
+                                    />
+                                    <span className="theme-option-copy">
+                                        <strong>{option === 'light' ? 'Light' : 'Dark'}</strong>
+                                        <span>{option === 'light' ? 'Current palette' : 'Low-light palette'}</span>
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                    </fieldset>
                 </section>
             )}
         </div>

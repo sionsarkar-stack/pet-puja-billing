@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -65,13 +65,14 @@ describe('App', () => {
     )
     expect(await screen.findByRole('heading', { name: 'Start or end a business day' })).toBeInTheDocument()
     expect(screen.getByText('Admin mode')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Table' })).toBeDisabled()
-    expect(screen.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'History' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Expenses' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Daily start/close' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Balance sheet' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Backup' })).toBeInTheDocument()
+    const adminTabs = within(screen.getByRole('tablist', { name: 'Restaurant management' }))
+    expect(adminTabs.getByRole('tab', { name: 'Table' })).toBeDisabled()
+    expect(adminTabs.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
+    expect(adminTabs.getByRole('tab', { name: 'History' })).toBeInTheDocument()
+    expect(adminTabs.getByRole('tab', { name: 'Expenses' })).toBeInTheDocument()
+    expect(adminTabs.getByRole('tab', { name: 'Daily start/close' })).toBeInTheDocument()
+    expect(adminTabs.getByRole('tab', { name: 'Balance sheet' })).toBeInTheDocument()
+    expect(adminTabs.getByRole('tab', { name: 'Backup' })).toBeInTheDocument()
   })
 
   it('explains rejected credentials without leaving the form', async () => {
@@ -100,10 +101,11 @@ describe('App', () => {
 
     render(<App splashDuration={0} />)
 
-    expect(await screen.findByRole('tab', { name: 'Table' })).toBeDisabled()
-    expect(screen.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
+    const captainTabs = within(await screen.findByRole('tablist', { name: 'Restaurant management' }))
+    expect(captainTabs.getByRole('tab', { name: 'Table' })).toBeDisabled()
+    expect(captainTabs.getByRole('tab', { name: 'Details' })).toBeInTheDocument()
     expect(screen.getByText('Captain mode')).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'Expenses' })).not.toBeInTheDocument()
+    expect(captainTabs.queryByRole('tab', { name: 'Expenses' })).not.toBeInTheDocument()
   })
 })
 

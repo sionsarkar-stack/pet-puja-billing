@@ -271,6 +271,40 @@ describe('financial views', () => {
         expect(screen.getByText('₹75.00')).toBeInTheDocument()
     })
 
+    it('requires a name when Others is selected for an expense', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse([]))
+            .mockResolvedValueOnce(jsonResponse({ ...expense, addedBy: 'Others: Arun' }, 201))
+        const user = userEvent.setup()
+
+        render(<ExpensesManager />)
+
+        await screen.findByRole('heading', { name: 'Expense entries' })
+        expect(screen.queryByLabelText(/ke bhai/)).not.toBeInTheDocument()
+        await user.click(screen.getByRole('radio', { name: 'Others' }))
+
+        const otherName = screen.getByLabelText(/ke bhai/)
+        expect(otherName).toBeRequired()
+        await user.type(screen.getByLabelText('Title'), 'Vegetables')
+        await user.type(screen.getByLabelText('Amount (INR)'), '75')
+        await user.click(screen.getByRole('button', { name: 'Add expense' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Enter a name for Others.')
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+
+        await user.type(otherName, '  Arun  ')
+        await user.click(screen.getByRole('button', { name: 'Add expense' }))
+
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            '/api/expenses',
+            expect.objectContaining({
+                body: JSON.stringify({ addedBy: 'Others', amount: 75, description: null, title: 'Vegetables', keBhai: 'Arun' }),
+                credentials: 'include',
+                method: 'POST',
+            }),
+        )
+    })
+
     it('shows profits, expenses, and revenue with their saved entries', async () => {
         vi.spyOn(globalThis, 'fetch')
             .mockResolvedValueOnce(jsonResponse({ expenses: 75, profits: 325, refunds: 0, revenue: 400 }))

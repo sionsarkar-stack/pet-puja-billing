@@ -24,7 +24,6 @@ export function SplashScreen() {
         <main className="splash-screen" role="status">
             <div className="splash-content">
                 <div aria-hidden="true" className="splash-faces">
-                    <img alt="" src="/players/rooney.webp" />
                     <img alt="" src="/players/manchester-united.png" />
                     <img alt="" src="/players/messi.jpg" />
                 </div>

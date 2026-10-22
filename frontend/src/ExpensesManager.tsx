@@ -12,6 +12,7 @@ type ExpenseDraft = {
     title: string
     amount: string
     addedBy: AddedByOption | ''
+    keBhai: string
     description: string
 }
 
@@ -27,6 +28,7 @@ const emptyDraft: ExpenseDraft = {
     title: '',
     amount: '',
     addedBy: '',
+    keBhai: '',
     description: '',
 }
 
@@ -89,6 +91,11 @@ function ExpensesManager() {
             setMessage({ tone: 'error', text: 'Select who added this expense.' })
             return
         }
+        const keBhai = draft.keBhai.trim()
+        if (draft.addedBy === 'Others' && !keBhai) {
+            setMessage({ tone: 'error', text: 'Enter a name for Others.' })
+            return
+        }
 
         setIsSaving(true)
         setMessage(null)
@@ -100,6 +107,7 @@ function ExpensesManager() {
                     amount,
                     description: draft.description.trim() || null,
                     title,
+                    ...(draft.addedBy === 'Others' ? { keBhai } : {}),
                 }),
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
@@ -183,6 +191,20 @@ function ExpensesManager() {
                             </label>)}
                         </div>
                     </fieldset>
+
+                    {draft.addedBy === 'Others' && (
+                        <div className="field-group">
+                            <label htmlFor="expense-ke-bhai">ke bhai <span aria-hidden="true">*</span></label>
+                            <input
+                                disabled={isSaving}
+                                id="expense-ke-bhai"
+                                maxLength={72}
+                                onChange={(event) => updateDraft('keBhai', event.target.value)}
+                                required
+                                value={draft.keBhai}
+                            />
+                        </div>
+                    )}
 
                     <div className="field-group">
                         <label htmlFor="expense-description">Description</label>
