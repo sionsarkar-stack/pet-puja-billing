@@ -96,6 +96,10 @@ public class Bill {
 	@Column(name = "online_amount", precision = 12, scale = 2)
 	private BigDecimal onlineAmount;
 
+	@Enumerated(EnumType.STRING)
+	@Column(name = "upi_qr_provider", length = 20)
+	private UpiQrProvider upiQrProvider;
+
 	@Column(name = "paid_at")
 	private Instant paidAt;
 
@@ -198,11 +202,17 @@ public class Bill {
 	}
 
 	public void markPaid(PaymentMethod paymentMethod, Instant paidAt, BigDecimal cashAmount, BigDecimal onlineAmount) {
+		markPaid(paymentMethod, paidAt, cashAmount, onlineAmount, null);
+	}
+
+	public void markPaid(PaymentMethod paymentMethod, Instant paidAt, BigDecimal cashAmount, BigDecimal onlineAmount,
+			UpiQrProvider upiQrProvider) {
 		this.openTableName = null;
 		this.paidAt = paidAt;
 		this.paymentMethod = paymentMethod;
 		this.cashAmount = cashAmount;
 		this.onlineAmount = onlineAmount;
+		this.upiQrProvider = onlineAmount != null && onlineAmount.signum() > 0 ? upiQrProvider : null;
 		this.status = BillStatus.PAID;
 	}
 
@@ -212,6 +222,14 @@ public class Bill {
 
 	public void reopen() {
 		completedAt = null;
+	}
+
+	public void moveOpenTable(String nextTableName) {
+		if (status != BillStatus.OPEN || openTableName == null) {
+			throw new IllegalStateException("Only an open table order can be moved");
+		}
+		openTableName = nextTableName;
+		tableName = nextTableName;
 	}
 
 	public void setCustomerName(String customerName) {
@@ -256,6 +274,10 @@ public class Bill {
 
 	public BigDecimal getOnlineAmount() {
 		return onlineAmount == null ? paymentMethod == PaymentMethod.ONLINE ? total : BigDecimal.ZERO : onlineAmount;
+	}
+
+	public UpiQrProvider getUpiQrProvider() {
+		return upiQrProvider;
 	}
 
 	public Instant getPaidAt() {

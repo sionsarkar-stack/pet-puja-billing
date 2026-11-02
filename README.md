@@ -58,9 +58,23 @@ To restore a downloaded backup:
 
 In **Details > Menu**, enter a name and choose **Combo** as the main section, then select existing non-combo menu items. Set the combo's own price, discount, description, and optional add-ons just like any other menu item. Combos are ordered and billed as a single item. Edit a combo to change its included items; remove a component from its combos before deleting it or changing its section to Combo.
 
+## Table order overview
+
+Indoor and outdoor tables are created with their respective **+** buttons; there are no preset empty tables. Creation opens the existing optional **Table name** field; leave it blank to use the table number. Only running orders and newly created drafts appear. Close an unused draft with **Close empty table**. Confirmed payment immediately hides its tile while keeping receipt controls available until **Close table** is selected. Unpaid completed orders stay visible for settlement.
+
+Collapsed table tiles show saved items, quantities, line prices, discounts, and the current total. Cards grow to show every order line without inner scrollbars. Select the table header to expand editing inside the same card: add menu items, adjust quantities, remove dishes, or change the optional table name. Contact details and order descriptions are optional expandable sections. Selecting the header again collapses the card without discarding its saved order; only one card is edited at a time. Use **Shift to Indoor** or **Shift to Outdoor** inside the expanded card to move an open order; confirm the destination in the dialog. The order's items, customer, notes, name, and completion state move together. An occupied destination is rejected. Complete the order to reveal payment controls inside the card. New table creation is disabled if current orders cannot be restored, to avoid reusing an occupied table number.
+
+## Payment QR selection
+
+Choose **Primary** or **Secondary** under **Details > Action > UPI QR account**. The choice applies across tables in the current workspace session, including split-payment QR codes. **Show UPI QR** on an order uses that account; hiding and reopening the QR does not reset it. The Action tab also contains the discount settings. If an account is not configured, only available accounts are offered.
+
 ## Paid order corrections
 
 Open **History**, select **Void / refund** on a paid order, choose the correction type, and enter a reason. Each paid order can be corrected once. The original paid order remains in History, while the negative adjustment appears in the Balance sheet and in a daily close created on the correction date. Previously saved daily closes remain unchanged.
+
+## Expense Excel exports
+
+In **Expenses**, choose an **Export period** and select **Download Excel**. Day, Month, Quarter, and Year use the selected date to choose the corresponding IST calendar period; Till now includes all recorded expenses through download time. Quarters are January-March, April-June, July-September, and October-December. The `.xlsx` file contains dates in IST, titles, added-by names, descriptions, numeric INR amounts, and a total. Empty periods do not generate a download.
 
 ## Operational safeguards
 
@@ -77,6 +91,8 @@ Open **History**, select **Void / refund** on a paid order, choose the correctio
 cd backend && ./mvnw verify
 cd frontend && npm test && npm run lint && npm run build
 ```
+
+For browser tests, run `npx playwright install chromium` once and then `npm run test:e2e` from the frontend directory. Playwright starts an isolated frontend on port 5174 and uses local API fixtures, not production records. The table-overview tests cover desktop/mobile in both themes; example screenshots and failure traces are saved under the frontend `test-results` directory.
 
 ## Production deployment (no Docker)
 

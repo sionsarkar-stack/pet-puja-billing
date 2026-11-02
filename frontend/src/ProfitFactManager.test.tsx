@@ -109,4 +109,35 @@ describe('ProfitFactManager', () => {
             expect(button).toHaveAttribute('aria-pressed', 'true')
         }
     })
+
+    it('shows cash and selected QR totals under By payment method', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([
+            {
+                billNumber: 'PP-CASH', id: 1, lines: [{ itemName: 'Meal', lineTotal: 25, quantity: 1, section: 'Mains', unitPrice: 25 }],
+                paidAt: new Date().toISOString(), paymentMethod: 'CASH', cashAmount: 25, onlineAmount: 0, total: 25, refund: null, tableName: 'Table 1',
+            },
+            {
+                billNumber: 'PP-PRIMARY', id: 2, lines: [{ itemName: 'Meal', lineTotal: 80, quantity: 1, section: 'Mains', unitPrice: 80 }],
+                paidAt: new Date().toISOString(), paymentMethod: 'ONLINE', cashAmount: 0, onlineAmount: 80, upiQrProvider: 'PRIMARY', total: 80, refund: null, tableName: 'Table 2',
+            },
+            {
+                billNumber: 'PP-SECONDARY', id: 3, lines: [{ itemName: 'Meal', lineTotal: 30, quantity: 1, section: 'Mains', unitPrice: 30 }],
+                paidAt: new Date().toISOString(), paymentMethod: 'SPLIT', cashAmount: 10, onlineAmount: 20, upiQrProvider: 'SECONDARY', total: 30, refund: null, tableName: 'Table 3',
+            },
+        ]))
+        const user = userEvent.setup()
+        render(<ProfitFactManager />)
+
+        await user.click(await screen.findByRole('tab', { name: 'By payment method' }))
+
+        expect(screen.getByRole('heading', { name: 'By payment method' })).toBeInTheDocument()
+        expect(screen.getByText('₹135.00')).toBeInTheDocument()
+        const paymentBreakdown = screen.getByRole('list', { name: 'Payment method revenue' })
+        expect(within(paymentBreakdown).getByText('Primary QR')).toBeInTheDocument()
+        expect(within(paymentBreakdown).getByText('Secondary QR')).toBeInTheDocument()
+        expect(within(paymentBreakdown).getByText('Cash')).toBeInTheDocument()
+        expect(paymentBreakdown).toHaveTextContent('₹80.00')
+        expect(paymentBreakdown).toHaveTextContent('₹20.00')
+        expect(paymentBreakdown).toHaveTextContent('₹35.00')
+    })
 })

@@ -1,9 +1,9 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RestaurantConfigurationContext } from './RestaurantConfiguration'
 import TableManager from './TableManager'
-import { createUpiPaymentUri } from './upiPayment'
+import { createUpiPaymentUri, getUpiQrVpa, type UpiQrProvider } from './upiPayment'
 import { isPaidOrder, parsePaymentAmountInPaise } from './financial'
 
 const pdf = vi.hoisted(() => {
@@ -68,6 +68,22 @@ async function selectMenuItem(user: ReturnType<typeof userEvent.setup>, menuItem
     if (!(checkbox as HTMLInputElement).checked) await user.click(checkbox)
 }
 
+async function openSeating(user: ReturnType<typeof userEvent.setup>, name: string) {
+    const addLabel = name.startsWith('Outdoor') ? 'Add outdoor table' : 'Add table'
+    await waitFor(() => expect(screen.getByRole('button', { name: addLabel })).toBeEnabled())
+    for (let attempt = 0; attempt < 20 && !screen.queryByRole('button', { name }); attempt += 1) {
+        await user.click(screen.getByRole('button', { name: addLabel }))
+    }
+    const header = screen.getByRole('button', { name })
+    if (header.getAttribute('aria-expanded') !== 'true') await user.click(header)
+}
+
+async function openDisclosure(user: ReturnType<typeof userEvent.setup>, name: string) {
+    const summary = screen.getByText(name, { selector: 'summary' })
+    if (!summary.parentElement!.hasAttribute('open')) await user.click(summary)
+    expect(summary.parentElement).toHaveAttribute('open')
+}
+
 async function setSelectedQuantity(user: ReturnType<typeof userEvent.setup>, quantity: number) {
     const picker = screen.getByRole('dialog', { name: 'Menu items' })
     const control = within(picker).getAllByRole('group', { name: /^Quantity for / })[0]
@@ -81,6 +97,135 @@ async function setSelectedQuantity(user: ReturnType<typeof userEvent.setup>, qua
 }
 
 describe('TableManager', () => {
+    it('starts without preset tables and creates an optionally named table from plus', async () => {
+        mockOrderFetch().mockResolvedValueOnce(jsonResponse([])).mockResolvedValueOnce(jsonResponse([]))
+        const user = userEvent.setup()
+        render(<TableManager />)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Add table' })).toBeEnabled())
+        expect(document.querySelectorAll('article.seating-card[data-seating-id]')).toHaveLength(0)
+        await user.click(screen.getByRole('button', { name: 'Add table' }))
+        expect(screen.getByRole('button', { name: 'Table 1' })).toBeInTheDocument()
+        expect(screen.getByLabelText('Table name')).not.toBeRequired()
+        expect(screen.getByLabelText('Table name')).toHaveFocus()
+        await user.type(screen.getByLabelText('Table name'), 'Family')
+        expect(screen.getByRole('button', { name: /Family/ })).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Close empty table' }))
+        expect(document.querySelectorAll('.table-grid > article.seating-card')).toHaveLength(0)
+        expect(screen.queryByLabelText('Table name')).not.toBeInTheDocument()
+    })
+
+    it('creates outdoor tables only from plus and closes unused drafts', async () => {
+        mockOrderFetch().mockResolvedValueOnce(jsonResponse([])).mockResolvedValueOnce(jsonResponse([]))
+        const user = userEvent.setup()
+        render(<TableManager />)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Add outdoor table' })).toBeEnabled())
+        await user.click(screen.getByRole('button', { name: 'Add outdoor table' }))
+        expect(screen.getByRole('button', { name: 'Outdoor 1' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Outdoor 2' })).not.toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Close empty table' }))
+        expect(document.querySelectorAll('.outdoor-grid > article.seating-card')).toHaveLength(0)
+    })
+
+    it('requires confirmation and preserves order details when shifting indoor to outdoor and back', async () => {
+        const menuItem = { id: 1, name: 'Meal', description: null, discountApplied: 0, price: 180 }
+        const tableOrder = {
+            tableName: 'Table 1', orderDescription: 'Bring a high chair',
+            customerName: 'Asha', customerPhone: '+919876543210', customerDateOfBirth: '1992-05-14',
+            completed: true, total: 360, lines: [{ menuItemId: 1, itemName: 'Meal', quantity: 2, unitPrice: 180, lineTotal: 360 }],
+        }
+        const outdoorOrder = { ...tableOrder, tableName: 'Outdoor 2' }
+        const fetchMock = mockOrderFetch()
+            .mockResolvedValueOnce(jsonResponse([menuItem]))
+            .mockResolvedValueOnce(jsonResponse([tableOrder, { ...tableOrder, tableName: 'Outdoor 1', completed: false }]))
+            .mockResolvedValueOnce(jsonResponse(outdoorOrder))
+            .mockResolvedValueOnce(jsonResponse({ ...outdoorOrder, tableName: 'Table 2' }))
+        const user = userEvent.setup()
+        render(<TableManager />)
+
+        await waitFor(() => expect(document.querySelector('article.seating-card[data-seating-id="table-1"]')).not.toBeNull())
+        const sourceCard = document.querySelector('article.seating-card[data-seating-id="table-1"]') as HTMLElement
+        await user.click(within(sourceCard).getByRole('button', { name: 'Table 1' }))
+        await user.click(within(sourceCard).getByRole('button', { name: 'Shift to Outdoor' }))
+
+        const confirmOutdoor = screen.getByRole('alertdialog', { name: 'Shift to Outdoor?' })
+        expect(confirmOutdoor).toHaveTextContent('Table 1')
+        expect(confirmOutdoor).toHaveTextContent('Outdoor 2')
+        expect(confirmOutdoor).toHaveTextContent('₹360.00')
+        expect(sourceCard).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Outdoor 2' })).not.toBeInTheDocument()
+        await user.click(within(confirmOutdoor).getByRole('button', { name: 'Confirm shift to Outdoor 2' }))
+
+        expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/open-orders/shift', expect.objectContaining({
+            body: JSON.stringify({ fromTableName: 'Table 1', toTableName: 'Outdoor 2' }),
+            method: 'PUT',
+        }))
+        expect(document.querySelector('article.seating-card[data-seating-id="table-1"]')).toBeNull()
+        const movedOutdoorCard = document.querySelector('article[data-seating-id="outdoor-2"]') as HTMLElement
+        const movedOutdoor = within(movedOutdoorCard).getByRole('button', { name: 'Outdoor 2' })
+        const movedOrderTable = within(movedOutdoorCard).getByRole('table', { name: 'Order for Outdoor 2' })
+        expect(within(movedOrderTable).getByRole('status')).toHaveTextContent('2')
+
+        await user.click(movedOutdoor)
+        await user.click(movedOutdoor)
+        await user.click(within(movedOutdoorCard).getByRole('button', { name: 'Shift to Indoor' }))
+        const confirmIndoor = screen.getByRole('alertdialog', { name: 'Shift to Indoor?' })
+        await user.click(within(confirmIndoor).getByRole('button', { name: 'Confirm shift to Table 2' }))
+
+        expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/open-orders/shift', expect.objectContaining({
+            body: JSON.stringify({ fromTableName: 'Outdoor 2', toTableName: 'Table 2' }),
+            method: 'PUT',
+        }))
+        const movedIndoorCard = document.querySelector('article[data-seating-id="table-2"]') as HTMLElement
+        expect(movedIndoorCard).toBeInTheDocument()
+        const movedBackOrderTable = within(movedIndoorCard).getByRole('table', { name: 'Order for Table 2' })
+        expect(within(movedBackOrderTable).getByRole('status')).toHaveTextContent('2')
+        expect(screen.getByText(/shifted to Table 2\./)).toBeInTheDocument()
+    })
+
+    it('collapses and reopens a selected table without discarding its draft', async () => {
+        mockOrderFetch()
+            .mockResolvedValueOnce(jsonResponse([{ id: 1, name: 'Tea', description: null, discountApplied: 0, price: 30 }]))
+            .mockResolvedValueOnce(jsonResponse([]))
+        const user = userEvent.setup()
+        render(<TableManager />)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Add table' })).toBeEnabled())
+        await user.click(screen.getByRole('button', { name: 'Add table' }))
+
+        const table = screen.getByRole('button', { name: 'Table 1' })
+        const card = table.closest('article.seating-card[data-seating-id]') as HTMLElement
+        expect(card).toHaveAttribute('data-seating-id', 'table-1')
+        expect(table).toHaveAttribute('aria-expanded', 'true')
+        expect(within(card).getByRole('region', { name: 'Table 1' })).toContainElement(screen.getByLabelText('Table name'))
+        expect(screen.queryByText('Selected seating')).not.toBeInTheDocument()
+        expect(within(card).getByText('Contact details', { selector: 'summary' }).parentElement).not.toHaveAttribute('open')
+        expect(screen.getByLabelText('Search by name or mobile')).not.toBeVisible()
+        expect(within(card).getByText('Order description', { selector: 'summary' }).parentElement).not.toHaveAttribute('open')
+        expect(screen.getByLabelText('Order description (optional)')).not.toBeVisible()
+
+        await user.click(table)
+        expect(table).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.queryByRole('region', { name: 'Table 1' })).not.toBeInTheDocument()
+        expect(table).toBeInTheDocument()
+
+        await user.click(table)
+        expect(table).toHaveAttribute('aria-expanded', 'true')
+        expect(within(card).getByRole('region', { name: 'Table 1' })).toBeInTheDocument()
+        await user.type(screen.getByLabelText('Table name'), 'Family')
+        await user.click(screen.getByRole('button', { name: 'Add table' }))
+        const secondCard = screen.getByRole('button', { name: 'Table 2' }).closest('article.seating-card[data-seating-id]') as HTMLElement
+        expect(secondCard).toHaveAttribute('data-seating-id', 'table-2')
+        expect(within(secondCard).getByRole('region', { name: 'Table 2' })).toContainElement(screen.getByLabelText('Table name'))
+        expect(within(card).queryByRole('region')).not.toBeInTheDocument()
+        expect(screen.getAllByRole('combobox', { name: 'Menu item' })).toHaveLength(1)
+        expect(document.querySelectorAll('#selected-order-panel')).toHaveLength(1)
+        await openSeating(user, 'Family')
+        expect(within(card).getByRole('region', { name: 'Family' })).toBeInTheDocument()
+        expect(screen.getByLabelText('Table name')).toHaveValue('Family')
+        expect(within(secondCard).queryByRole('region')).not.toBeInTheDocument()
+        expect(document.querySelectorAll('#selected-order-panel')).toHaveLength(1)
+        expect(screen.queryByText('Selected seating')).not.toBeInTheDocument()
+    })
+
     it('toggles member billing open and closed while preserving the saved order', async () => {
         const fetchMock = mockOrderFetch()
             .mockResolvedValueOnce(jsonResponse([{ id: 1, name: 'Tea', description: null, discountApplied: 0, price: 30 }]))
@@ -139,7 +284,7 @@ describe('TableManager', () => {
             .mockReturnValueOnce(pending)
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('combobox', { name: 'Menu item' }))
         const checkbox = screen.getByRole('checkbox', { name: 'Select Tea' })
         await user.click(checkbox)
@@ -168,7 +313,7 @@ describe('TableManager', () => {
             .mockResolvedValueOnce(new Response(null, { status: 204 }))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('combobox', { name: 'Menu item' }))
         const checkbox = screen.getByRole('checkbox', { name: 'Select Tea' })
         expect(screen.queryByRole('button', { name: 'Add to Table 1' })).not.toBeInTheDocument()
@@ -198,10 +343,11 @@ describe('TableManager', () => {
         const user = userEvent.setup()
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('combobox', { name: 'Menu item' }))
         await user.click(screen.getByRole('checkbox', { name: 'Select Tea' }))
         await screen.findByText('Tea added to Table 1.')
+        await openDisclosure(user, 'Order description')
         await user.type(screen.getByRole('textbox', { name: 'Order description (optional)' }), 'No sugar, serve hot')
         await user.click(screen.getByRole('button', { name: 'Save description' }))
 
@@ -292,6 +438,8 @@ describe('TableManager', () => {
             paidAt: '2026-10-15T10:00:00Z', cashAmount: 0.1, onlineAmount: 0.2, total: 0.3, lines: [], refund: null
         }
         expect(isPaidOrder(payment)).toBe(true)
+        expect(isPaidOrder({ ...payment, upiQrProvider: 'SECONDARY' })).toBe(true)
+        expect(isPaidOrder({ ...payment, upiQrProvider: 'UNKNOWN' })).toBe(false)
         expect(isPaidOrder({ ...payment, onlineAmount: 0.19 })).toBe(false)
         expect(isPaidOrder({ ...payment, cashAmount: undefined })).toBe(false)
     })
@@ -318,9 +466,9 @@ describe('TableManager', () => {
         render(<TableManager />)
         await user.click(await screen.findByRole('button', { name: 'Friends' }))
         expect(screen.getByLabelText('Table name')).toHaveValue('Friends')
-        expect(screen.getByRole('heading', { name: 'Friends' })).toBeInTheDocument()
+        expect(screen.getByRole('region', { name: 'Friends' })).toBeInTheDocument()
         await user.clear(screen.getByLabelText('Table name'))
-        expect(screen.getByRole('heading', { name: 'Table 1' })).toBeInTheDocument()
+        expect(screen.getByRole('region', { name: 'Table 1' })).toBeInTheDocument()
         await user.click(screen.getByRole('button', { name: 'Save table name' }))
         await screen.findByText('Table name cleared.')
         expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toMatchObject({ tableName: 'Table 1', tableLabel: '' })
@@ -344,7 +492,7 @@ describe('TableManager', () => {
             }, 201))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.type(screen.getByLabelText('Table name'), '  Family  ')
         await selectMenuItem(user, '1')
         await screen.findByRole('table', { name: 'Order for Family' })
@@ -355,10 +503,11 @@ describe('TableManager', () => {
         await user.click(screen.getByRole('button', { name: 'Confirm cash payment' }))
         await screen.findByText('Family paid by cash: ₹30.00.')
         expect(JSON.parse(fetchMock.mock.calls[4][1]?.body as string).tableName).toBe('Table 1')
-        await user.click(screen.getByRole('button', { name: 'Restart table' }))
-        await user.click(screen.getByRole('button', { name: 'Table 1' }))
+        expect(screen.queryByRole('button', { name: 'Family' })).not.toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Close table' }))
+        await openSeating(user, 'Table 2')
         expect(screen.getByLabelText('Table name')).toHaveValue('')
-        expect(screen.getByRole('heading', { name: 'Table 1' })).toBeInTheDocument()
+        expect(screen.getByRole('region', { name: 'Table 2' })).toBeInTheDocument()
     })
 
     it('creates independent committee orders and applies the entered member discount', async () => {
@@ -374,7 +523,7 @@ describe('TableManager', () => {
             .mockResolvedValueOnce(jsonResponse({ ...order, committeeDiscountPercent: 50, discountPercent: 50, discountAmount: 100, total: 100 }))
         const user = userEvent.setup()
         render(<TableManager />)
-        await screen.findByRole('button', { name: 'Table 1' })
+        await screen.findByRole('row', { name: /^Rimo / })
         expect(screen.getByRole('heading', { name: 'Committee' })).toBeInTheDocument()
         await user.click(screen.getByRole('row', { name: /^Rimo / }))
         expect(screen.getByRole('heading', { name: 'Rimo' })).toBeInTheDocument()
@@ -431,17 +580,18 @@ describe('TableManager', () => {
             </RestaurantConfigurationContext.Provider>,
         )
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('button', { name: 'Show UPI QR' }))
 
         expect(screen.getByTitle('UPI payment QR')).toBeInTheDocument()
         expect(screen.getByRole('heading', { name: 'Scan to pay ₹302.00' })).toBeInTheDocument()
+        expect(screen.getByText('Active account: Primary')).toBeInTheDocument()
         expect(screen.getByText(/Pay to sionsarkar@okicici/)).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Paid online' })).toBeInTheDocument()
         expect(fetchMock).toHaveBeenCalledTimes(2)
     })
 
-    it('defaults to the primary UPI QR and switches to the secondary payee on request', async () => {
+    it('uses the shared UPI selection and keeps it when hiding and showing the QR', async () => {
         mockOrderFetch()
             .mockResolvedValueOnce(jsonResponse([]))
             .mockResolvedValueOnce(jsonResponse([{
@@ -452,31 +602,67 @@ describe('TableManager', () => {
             }]))
         const user = userEvent.setup()
 
-        render(<RestaurantConfigurationContext.Provider value={{
+        const renderOrder = (provider: UpiQrProvider) => <RestaurantConfigurationContext.Provider value={{
             restaurantName: 'The Third Break',
             upiVpa: 'primary@upi',
             secondaryUpiVpa: 'secondary@upi',
-        }}><TableManager /></RestaurantConfigurationContext.Provider>)
+        }}><TableManager upiQrProvider={provider} /></RestaurantConfigurationContext.Provider>
+        const { rerender } = render(renderOrder('primary'))
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('button', { name: 'Show UPI QR' }))
 
-        const primaryOption = screen.getByRole('radio', { name: 'Primary' })
-        const secondaryOption = screen.getByRole('radio', { name: 'Show secondary' })
         const qrValue = () => screen.getByTitle('UPI payment QR').parentElement!.querySelector('desc')!.textContent!
-        expect(primaryOption).toBeChecked()
+        expect(screen.getByText('Active account: Primary')).toBeInTheDocument()
+        expect(screen.queryByRole('group', { name: 'QR account' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('radio', { name: /Secondary/ })).not.toBeInTheDocument()
         expect(new URL(qrValue()).searchParams.get('pa')).toBe('primary@upi')
 
-        await user.click(secondaryOption)
-        expect(primaryOption).not.toBeChecked()
-        expect(secondaryOption).toBeChecked()
+        rerender(renderOrder('secondary'))
+        expect(screen.getByText('Active account: Secondary')).toBeInTheDocument()
         expect(screen.getByText('Pay to secondary@upi')).toBeInTheDocument()
         expect(new URL(qrValue()).searchParams.get('pa')).toBe('secondary@upi')
 
         await user.click(screen.getByRole('button', { name: 'Hide UPI QR' }))
         await user.click(screen.getByRole('button', { name: 'Show UPI QR' }))
-        expect(screen.getByRole('radio', { name: 'Primary' })).toBeChecked()
-        expect(new URL(qrValue()).searchParams.get('pa')).toBe('primary@upi')
+        expect(new URL(qrValue()).searchParams.get('pa')).toBe('secondary@upi')
+    })
+
+    it('records the QR account used when an order is paid online', async () => {
+        const fetchMock = mockOrderFetch()
+            .mockResolvedValueOnce(jsonResponse([]))
+            .mockResolvedValueOnce(jsonResponse([{
+                completed: true,
+                lines: [{ itemName: 'Paneer Tikka', lineTotal: 302, menuItemId: 1, quantity: 1, unitPrice: 302 }],
+                tableName: 'Table 1',
+                total: 302,
+            }]))
+            .mockResolvedValueOnce(jsonResponse({
+                id: 8, billNumber: 'PP-ONLINE', tableName: 'Table 1', paymentMethod: 'ONLINE',
+                paidAt: '2026-10-29T10:00:00Z', cashAmount: 0, onlineAmount: 302, upiQrProvider: 'SECONDARY',
+                total: 302, lines: [{ itemName: 'Paneer Tikka', quantity: 1, unitPrice: 302, lineTotal: 302 }], refund: null,
+            }, 201))
+        const user = userEvent.setup()
+
+        render(<RestaurantConfigurationContext.Provider value={{
+            restaurantName: 'The Third Break', upiVpa: 'primary@upi', secondaryUpiVpa: 'secondary@upi',
+        }}><TableManager upiQrProvider="secondary" /></RestaurantConfigurationContext.Provider>)
+
+        await openSeating(user, 'Table 1')
+        await user.click(screen.getByRole('button', { name: 'Show UPI QR' }))
+        await user.click(screen.getByRole('button', { name: 'Paid online' }))
+        await user.click(screen.getByRole('button', { name: 'Confirm online payment' }))
+        await screen.findByText('Table 1 paid by online: ₹302.00.')
+
+        expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+            paymentMethod: 'ONLINE', tableName: 'Table 1', upiQrProvider: 'SECONDARY',
+        })
+    })
+
+    it('falls back to an available UPI account when the chosen one is not configured', () => {
+        expect(getUpiQrVpa('secondary', ' primary@upi ', '')).toBe('primary@upi')
+        expect(getUpiQrVpa('primary', '', 'secondary@upi')).toBe('secondary@upi')
+        expect(getUpiQrVpa('primary', '', '')).toBe('')
     })
 
     it('validates split amounts and shows a QR for only the online portion before confirmation', async () => {
@@ -492,8 +678,8 @@ describe('TableManager', () => {
                 lines: [{ itemName: 'Meal', quantity: 1, unitPrice: 302, lineTotal: 302 }], refund: null
             }, 201))
         const user = userEvent.setup()
-        render(<RestaurantConfigurationContext.Provider value={{ restaurantName: 'Pet Puja', upiVpa: 'restaurant@upi' }}><TableManager /></RestaurantConfigurationContext.Provider>)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        render(<RestaurantConfigurationContext.Provider value={{ restaurantName: 'Pet Puja', upiVpa: 'restaurant@upi', secondaryUpiVpa: 'secondary@upi' }}><TableManager upiQrProvider="secondary" /></RestaurantConfigurationContext.Provider>)
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('checkbox', { name: 'Split payment' }))
         expect(screen.getByRole('button', { name: 'Record split payment' })).toBeDisabled()
         await user.type(screen.getByLabelText('Cash amount (INR)'), '100')
@@ -505,6 +691,7 @@ describe('TableManager', () => {
         expect(screen.getByRole('heading', { name: 'Scan to pay ₹200.00' })).toBeInTheDocument()
         const qrValue = screen.getByTitle('UPI payment QR').parentElement!.querySelector('desc')!.textContent!
         expect(new URL(qrValue).searchParams.get('am')).toBe('200.00')
+        expect(new URL(qrValue).searchParams.get('pa')).toBe('secondary@upi')
         await user.clear(screen.getByLabelText('Online amount (INR)'))
         await user.type(screen.getByLabelText('Online amount (INR)'), '150')
         expect(screen.getByRole('button', { name: 'Record split payment' })).toBeDisabled()
@@ -521,7 +708,9 @@ describe('TableManager', () => {
         expect(screen.getByRole('alertdialog', { name: 'Confirm payment' })).toHaveTextContent('Cash: ₹102.00')
         await user.click(screen.getByRole('button', { name: 'Confirm split payment' }))
         await screen.findByText('Table 1 paid by split: ₹302.00.')
-        expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({ paymentMethod: 'SPLIT', tableName: 'Table 1', cashAmount: 102, onlineAmount: 200 })
+        expect(JSON.parse(fetchMock.mock.calls[2][1]?.body as string)).toEqual({
+            paymentMethod: 'SPLIT', tableName: 'Table 1', cashAmount: 102, onlineAmount: 200, upiQrProvider: 'SECONDARY',
+        })
     })
 
     it('adds discounted menu items to the selected table and totals their price', async () => {
@@ -559,9 +748,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        expect(await screen.findByRole('button', { name: 'Table 7' })).toBeInTheDocument()
-        expect(screen.getAllByRole('button', { name: /^Table [1-7]$/ })).toHaveLength(7)
-        expect(screen.getAllByRole('button', { name: /^Outdoor (?:[1-9]|10)$/ })).toHaveLength(10)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Add table' })).toBeEnabled())
+        expect(document.querySelectorAll('article.seating-card[data-seating-id]')).toHaveLength(0)
         expect(fetchMock).toHaveBeenCalledWith(
             '/api/menu',
             expect.objectContaining({ credentials: 'include' }),
@@ -570,16 +758,15 @@ describe('TableManager', () => {
             '/api/open-orders',
             expect.objectContaining({ credentials: 'include' }),
         )
+        await user.click(screen.getByRole('button', { name: 'Add table' }))
+        await user.click(screen.getByRole('button', { name: 'Add table' }))
+        await user.click(screen.getByRole('button', { name: 'Add outdoor table' }))
         const tableOneButton = screen.getByRole('button', { name: 'Table 1' })
         const tableTwoButton = screen.getByRole('button', { name: 'Table 2' })
         expect(within(tableOneButton).getByText('Available')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Outdoor 1' })).toBeInTheDocument()
 
-        await user.click(screen.getByRole('button', { name: 'Add table' }))
-        await user.click(screen.getByRole('button', { name: 'Add outdoor table' }))
-        expect(screen.getByRole('button', { name: 'Table 8' })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'Outdoor 11' })).toBeInTheDocument()
-
-        await user.click(screen.getByRole('button', { name: 'Table 2' }))
+        await openSeating(user, 'Table 2')
         await selectMenuItem(user, '1')
         await setSelectedQuantity(user, 3)
 
@@ -592,12 +779,18 @@ describe('TableManager', () => {
         expect(within(orderTable).getByText('₹90.00')).toBeInTheDocument()
         expect(within(orderTable).getAllByText('₹270.00')).toHaveLength(4)
         expect(within(tableTwoButton).getByText('Open')).toBeInTheDocument()
-        expect(within(tableTwoButton).getByText('3 items · ₹270.00')).toBeInTheDocument()
+        const tableTwoCard = tableTwoButton.closest('article.seating-card[data-seating-id]') as HTMLElement
+        expect(within(tableTwoCard).getByRole('table', { name: 'Order for Table 2' })).toBe(orderTable)
+        expect(within(tableTwoButton).queryByText(/Aloo Tikki/)).not.toBeInTheDocument()
 
-        await user.click(screen.getByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         expect(screen.getByText('No items selected for Table 1.')).toBeInTheDocument()
+        expect(tableTwoButton).toHaveAccessibleDescription(/3 items · ₹270.00/)
+        expect(within(tableTwoButton).getByText(/Aloo Tikki/)).toBeInTheDocument()
+        expect(within(tableTwoButton).getByText('3 x')).toBeInTheDocument()
+        expect(within(tableTwoCard).queryByRole('table', { name: 'Order for Table 2' })).not.toBeInTheDocument()
 
-        await user.click(screen.getByRole('button', { name: 'Outdoor 1' }))
+        await openSeating(user, 'Outdoor 1')
         expect(screen.getByText('No items selected for Outdoor 1.')).toBeInTheDocument()
         await selectMenuItem(user, '1')
         expect(within(await screen.findByRole('table', { name: 'Order for Outdoor 1' })).getByText('Aloo Tikki')).toBeInTheDocument()
@@ -626,7 +819,7 @@ describe('TableManager', () => {
             .mockResolvedValueOnce(new Response(null, { status: 204 }))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('combobox', { name: 'Menu item' }))
         const checkbox = screen.getByRole('checkbox', { name: 'Select Sandwich' })
         const row = checkbox.closest('.table-menu-check-row') as HTMLElement
@@ -675,7 +868,7 @@ describe('TableManager', () => {
             }))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('combobox', { name: 'Menu item' }))
         expect(screen.queryByRole('button', { name: 'Queue item' })).not.toBeInTheDocument()
         expect(screen.queryByRole('group', { name: 'Quantity for Tea' })).not.toBeInTheDocument()
@@ -701,7 +894,7 @@ describe('TableManager', () => {
             .mockResolvedValueOnce(jsonResponse([]))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         expect(screen.queryByLabelText('Search menu')).not.toBeInTheDocument()
         expect(screen.getAllByRole('combobox', { name: 'Menu item' })).toHaveLength(1)
         await user.type(screen.getByLabelText('Menu item'), 'CHUTNEY quick')
@@ -745,15 +938,15 @@ describe('TableManager', () => {
             }))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await selectMenuItem(user, '1')
         await setSelectedQuantity(user, 2)
         await user.click(screen.getByRole('button', { name: 'Increase selected Aloo Tikki quantity' }))
         expect(within(within(screen.getByRole('dialog', { name: 'Menu items' })).getByRole('group', { name: 'Quantity for Aloo Tikki' })).getByText('3')).toBeInTheDocument()
-        await user.click(screen.getByRole('button', { name: 'Table 2' }))
+        await openSeating(user, 'Table 2')
         expect(screen.queryByRole('table', { name: 'Order for Table 2' })).not.toBeInTheDocument()
         await selectMenuItem(user, '2')
-        await user.click(screen.getByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         expect(screen.getByRole('table', { name: 'Order for Table 1' })).toHaveTextContent('Aloo Tikki')
         expect(screen.getByRole('table', { name: 'Order for Table 1' })).not.toHaveTextContent('Tea')
         expect(fetchMock).toHaveBeenCalledTimes(6)
@@ -763,7 +956,7 @@ describe('TableManager', () => {
             { menuItemId: 1, quantity: 3, addOnIds: [] }, { menuItemId: 2, quantity: 1, addOnIds: [] },
         ])
         expect(screen.queryByRole('region', { name: 'Pending items for Table 1' })).not.toBeInTheDocument()
-        await user.click(screen.getByRole('button', { name: 'Table 2' }))
+        await openSeating(user, 'Table 2')
         expect(screen.getByRole('table', { name: 'Order for Table 2' })).toHaveTextContent('Tea')
     })
 
@@ -789,7 +982,7 @@ describe('TableManager', () => {
             .mockResolvedValueOnce(jsonResponse(saved(1)))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await selectMenuItem(user, '1')
         await setSelectedQuantity(user, 2)
         await user.click(screen.getByRole('checkbox', { name: 'Add Extra cheese' }))
@@ -819,7 +1012,7 @@ describe('TableManager', () => {
             }))
         const user = userEvent.setup()
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await selectMenuItem(user, '1')
         await setSelectedQuantity(user, 2)
         expect(screen.getByRole('button', { name: 'Complete order' })).toBeDisabled()
@@ -862,7 +1055,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), '98765 43210')
         await user.click(screen.getByRole('button', { name: 'Search' }))
         expect(await screen.findByText(/Saved profile filled/)).toBeInTheDocument()
@@ -911,7 +1105,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), 'Aarav')
         await user.click(screen.getByRole('button', { name: 'Search' }))
 
@@ -949,7 +1144,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), '98765 43210')
         await user.click(screen.getByRole('button', { name: 'Search' }))
         expect(await screen.findByText(/No saved profile found/)).toBeInTheDocument()
@@ -1003,7 +1199,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), 'Mira Patel')
         await user.click(screen.getByRole('button', { name: 'Search' }))
         await user.click(await screen.findByRole('button', { name: 'Create new contact' }))
@@ -1041,7 +1238,8 @@ describe('TableManager', () => {
         const user = userEvent.setup()
 
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), '12345')
         await user.click(screen.getByRole('button', { name: 'Search' }))
 
@@ -1057,7 +1255,8 @@ describe('TableManager', () => {
         const user = userEvent.setup()
 
         render(<TableManager />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), 'Mira Patel')
         await user.click(screen.getByRole('button', { name: 'Search' }))
         await user.click(await screen.findByRole('button', { name: 'Create new contact' }))
@@ -1101,7 +1300,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         await user.type(screen.getByLabelText('Search by name or mobile'), '98765 43210')
         await user.click(screen.getByRole('button', { name: 'Search' }))
         await user.click(await screen.findByRole('button', { name: 'Create new contact' }))
@@ -1170,7 +1370,8 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
+        await openDisclosure(user, 'Contact details')
         expect(within(screen.getByRole('group', { name: 'Selected customer' })).getByText('Aarav Mehta')).toBeInTheDocument()
         await user.click(screen.getByRole('button', { name: 'Remove customer' }))
         expect(screen.queryByRole('group', { name: 'Selected customer' })).not.toBeInTheDocument()
@@ -1232,7 +1433,7 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await selectMenuItem(user, '1')
         const orderTable = await screen.findByRole('table', { name: 'Order for Table 1' })
         await user.click(within(orderTable).getByRole('button', { name: 'Increase Aloo Tikki quantity' }))
@@ -1383,7 +1584,7 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         const menuSelect = screen.getByLabelText('Menu item')
         await user.click(menuSelect)
         expect(within(screen.getByRole('group', { name: 'Continental / Sandwiches' })).getByRole('checkbox', { name: 'Select Veg Sandwich' })).toBeInTheDocument()
@@ -1456,7 +1657,7 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Outdoor 11' }))
+        await openSeating(user, 'Outdoor 11')
 
         const orderTable = screen.getByRole('table', { name: 'Order for Outdoor 11' })
         expect(within(orderTable).getByText('Aloo Tikki')).toBeInTheDocument()
@@ -1472,7 +1673,7 @@ describe('TableManager', () => {
         )
     })
 
-    it('keeps the menu available when current open orders cannot be restored', async () => {
+    it('prevents new table creation when current orders cannot be safely restored', async () => {
         const menuItem = {
             description: 'Freshly grilled paneer',
             discountApplied: 0,
@@ -1483,15 +1684,12 @@ describe('TableManager', () => {
         mockOrderFetch()
             .mockResolvedValueOnce(jsonResponse([menuItem]))
             .mockResolvedValueOnce(new Response(null, { status: 409 }))
-        const user = userEvent.setup()
-
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
-
-        expect(await screen.findByLabelText('Menu item')).toBeInTheDocument()
-        await user.click(screen.getByLabelText('Menu item'))
-        expect(screen.getByRole('checkbox', { name: 'Select Paneer Tikka' })).toBeInTheDocument()
+        expect(await screen.findByRole('alert')).toHaveTextContent('We could not restore current orders.')
+        expect(screen.getByRole('button', { name: 'Add table' })).toBeDisabled()
+        expect(screen.getByRole('button', { name: 'Add outdoor table' })).toBeDisabled()
+        expect(document.querySelectorAll('article.seating-card[data-seating-id]')).toHaveLength(0)
     })
 
     it('refreshes menu items when the Table tab becomes active again', async () => {
@@ -1509,7 +1707,7 @@ describe('TableManager', () => {
         const view = render(<TableManager isActive={false} />)
 
         view.rerender(<TableManager isActive />)
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         expect(screen.getByText('No menu items are available yet.')).toBeInTheDocument()
 
         fetchMock
@@ -1558,7 +1756,7 @@ describe('TableManager', () => {
             </RestaurantConfigurationContext.Provider>,
         )
 
-        await user.click(await screen.findByRole('button', { name: 'Table 2' }))
+        await openSeating(user, 'Table 2')
         expect(screen.getByText('Description:').parentElement).toHaveTextContent('No onions, extra crisp')
         await user.click(screen.getByRole('button', { name: 'Create invoice' }))
 
@@ -1614,7 +1812,7 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await user.click(screen.getByRole('button', { name: 'Create invoice' }))
 
         const sendInWhatsApp = screen.getByRole('button', { name: 'Send in WhatsApp' })
@@ -1650,7 +1848,7 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await user.click(await screen.findByRole('button', { name: 'Table 1' }))
+        await openSeating(user, 'Table 1')
         await selectMenuItem(user, '1')
 
         expect(await screen.findByText('We could not save this order. Your last confirmed order is unchanged.')).toBeInTheDocument()
@@ -1723,14 +1921,19 @@ describe('TableManager', () => {
 
         render(<TableManager />)
 
-        await screen.findByRole('button', { name: 'Outdoor 3' })
-        await user.click(screen.getByRole('button', { name: 'Outdoor 3' }))
+        await openSeating(user, 'Outdoor 3')
         await selectMenuItem(user, '1')
         await setSelectedQuantity(user, 2)
 
         await user.click(await screen.findByRole('button', { name: 'Complete order' }))
         expect(screen.queryByRole('button', { name: 'Add to Outdoor 3' })).not.toBeInTheDocument()
         expect(await screen.findByRole('button', { name: 'Paid online' })).toBeInTheDocument()
+        const paymentOptions = screen.getByRole('region', { name: 'Payment options' })
+        expect(paymentOptions.closest('.completed-order-panel')).not.toBeNull()
+        expect(paymentOptions.closest('.table-order-summary')).toBeNull()
+        expect(within(paymentOptions).getByRole('button', { name: 'Paid by cash' })).toBeInTheDocument()
+        expect(within(paymentOptions).getByRole('checkbox', { name: 'Split payment' })).toBeInTheDocument()
+        expect(paymentOptions).toHaveFocus()
         await user.click(screen.getByRole('button', { name: 'Paid by cash' }))
         expect(fetchMock).toHaveBeenCalledTimes(5)
         expect(screen.getByRole('alertdialog', { name: 'Confirm payment' })).toHaveTextContent('₹400.00')
@@ -1749,6 +1952,8 @@ describe('TableManager', () => {
             }),
         )
         expect(await screen.findByText('Outdoor 3 paid by cash: ₹400.00.')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Outdoor 3' })).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Outdoor 1' })).toBeInTheDocument()
         expect(screen.getByText('No items selected for Outdoor 3.')).toBeInTheDocument()
         expect(screen.getByRole('heading', { name: 'Receipt PP-123' })).toBeInTheDocument()
         await user.click(screen.getByRole('button', { name: 'Create paid receipt' }))
@@ -1761,7 +1966,7 @@ describe('TableManager', () => {
         expect(screen.getByRole('button', { name: 'Print receipt' })).toBeDisabled()
         fireEvent.load(paidReceiptFrame)
         expect(screen.getByRole('button', { name: 'Print receipt' })).toBeEnabled()
-        await user.click(screen.getByRole('button', { name: 'Restart table' }))
+        await user.click(screen.getByRole('button', { name: 'Close table' }))
         expect(screen.queryByRole('heading', { name: /^Outdoor 3$/ })).not.toBeInTheDocument()
     })
 })

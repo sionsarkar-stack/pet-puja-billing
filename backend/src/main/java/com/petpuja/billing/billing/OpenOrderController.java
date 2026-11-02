@@ -14,6 +14,7 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -138,6 +139,26 @@ public class OpenOrderController {
         return ResponseEntity.ok(toResponse(billRepository.save(bill)));
     }
 
+    @PutMapping("/shift")
+    @Transactional
+    public OpenOrderResponse shiftOpenOrder(@Valid @RequestBody ShiftOpenOrderRequest request) {
+        if (request.fromTableName().equals(request.toTableName())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a different destination table");
+        }
+        var bill = billRepository.findByOpenTableNameForUpdate(request.fromTableName())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Open table order not found"));
+        if (billRepository.existsByOpenTableName(request.toTableName())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Destination table already has an open order");
+        }
+        bill.moveOpenTable(request.toTableName());
+        try {
+            return toResponse(billRepository.saveAndFlush(bill));
+        } catch (DataIntegrityViolationException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Destination table already has an open order",
+                    exception);
+        }
+    }
+
     private static OpenOrderResponse toResponse(Bill bill) {
         return new OpenOrderResponse(
                 bill.getTableName(),
@@ -214,6 +235,11 @@ public class OpenOrderController {
             @PastOrPresent LocalDate customerDateOfBirth,
             @NotNull @Size(max = 100) List<@Valid OpenOrderLineRequest> lines,
             boolean completed) {
+    }
+
+    public record ShiftOpenOrderRequest(
+            @NotBlank @Size(max = 30) @Pattern(regexp = "(?:Table|Outdoor) [1-9][0-9]*") String fromTableName,
+            @NotBlank @Size(max = 30) @Pattern(regexp = "(?:Table|Outdoor) [1-9][0-9]*") String toTableName) {
     }
 
     public record OpenOrderLineRequest(

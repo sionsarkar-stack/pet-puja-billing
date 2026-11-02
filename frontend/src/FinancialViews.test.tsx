@@ -1,10 +1,11 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RestaurantConfigurationContext } from './RestaurantConfiguration'
 import { formatDateTime, formatTime, getDateInputBoundary, getDateInputValue } from './financial'
 import BalanceSheetManager from './BalanceSheetManager'
 import ExpensesManager from './ExpensesManager'
+import { downloadExpenseWorkbook } from './expenseExport'
 import HistoryManager from './HistoryManager'
 
 const pdf = vi.hoisted(() => {
@@ -31,6 +32,10 @@ const pdf = vi.hoisted(() => {
 })
 
 vi.mock('jspdf', () => ({ jsPDF: pdf.jsPDF }))
+vi.mock('./expenseExport', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./expenseExport')>(),
+    downloadExpenseWorkbook: vi.fn().mockResolvedValue(undefined),
+}))
 
 function jsonResponse(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), {
@@ -233,6 +238,54 @@ describe('financial views', () => {
         expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
 
+    it('exports expenses for every selected period and hides the date for till now', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([expense]))
+        const user = userEvent.setup()
+        render(<ExpensesManager />)
+        await screen.findByRole('table', { name: 'Recorded expenses' })
+        await user.clear(screen.getByLabelText('Export date (IST)'))
+        await user.type(screen.getByLabelText('Export date (IST)'), '2026-09-15')
+        for (const period of ['day', 'month', 'quarter', 'year', 'all']) {
+            await user.selectOptions(screen.getByLabelText('Export period'), period)
+            await user.click(screen.getByRole('button', { name: 'Download Excel' }))
+            expect(await screen.findByRole('status')).toHaveTextContent('Expenses exported to Excel.')
+            expect(downloadExpenseWorkbook).toHaveBeenLastCalledWith([expense], expect.stringMatching(new RegExp(`^expenses-${period}-.*\\.xlsx$`)))
+        }
+        expect(screen.queryByLabelText('Export date (IST)')).not.toBeInTheDocument()
+    })
+
+    it('does not download a workbook when the period has no expenses', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([expense]))
+        const user = userEvent.setup()
+        render(<ExpensesManager />)
+        await screen.findByRole('table', { name: 'Recorded expenses' })
+        await user.clear(screen.getByLabelText('Export date (IST)'))
+        await user.type(screen.getByLabelText('Export date (IST)'), '2025-01-01')
+        await user.click(screen.getByRole('button', { name: 'Download Excel' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent('No expenses recorded for the selected period.')
+        expect(downloadExpenseWorkbook).not.toHaveBeenCalled()
+    })
+
+    it('shows export failure and allows a retry', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse([expense]))
+        vi.mocked(downloadExpenseWorkbook).mockRejectedValueOnce(new Error('Download failed'))
+        const user = userEvent.setup()
+        render(<ExpensesManager />)
+        await screen.findByRole('table', { name: 'Recorded expenses' })
+        await user.selectOptions(screen.getByLabelText('Export period'), 'all')
+        await user.click(screen.getByRole('button', { name: 'Download Excel' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Could not export expenses.')
+        await user.click(screen.getByRole('button', { name: 'Download Excel' }))
+        expect(await screen.findByRole('status')).toHaveTextContent('Expenses exported to Excel.')
+    })
+
+    it('disables export while expenses cannot be loaded', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}, 500))
+        render(<ExpensesManager />)
+        expect(await screen.findByRole('alert')).toHaveTextContent('We could not load expenses.')
+        expect(screen.getByRole('button', { name: 'Download Excel' })).toBeDisabled()
+    })
+
     it('submits all expense fields and displays the saved expense', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch')
             .mockResolvedValueOnce(jsonResponse([]))
@@ -243,7 +296,7 @@ describe('financial views', () => {
 
         await screen.findByRole('heading', { name: 'Expense entries' })
         expect(within(screen.getByRole('radiogroup', { name: 'Added by' }).parentElement!).getAllByRole('radio').map((radio) => radio.getAttribute('value')))
-            .toEqual(['Rimo', 'Rjoe', 'Rishi', 'Dinda', 'Others'])
+            .toEqual(['Rimo', 'Rjoe', 'Rishi', 'Dinda', 'Cash'])
         await user.type(screen.getByLabelText('Title'), 'Vegetables')
         await user.type(screen.getByLabelText('Amount (INR)'), '75')
         await user.type(screen.getByLabelText('Description'), 'Morning market')
@@ -271,38 +324,111 @@ describe('financial views', () => {
         expect(screen.getByText('₹75.00')).toBeInTheDocument()
     })
 
-    it('requires a name when Others is selected for an expense', async () => {
+    it('submits Cash without an extra name and does not offer Others', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch')
             .mockResolvedValueOnce(jsonResponse([]))
-            .mockResolvedValueOnce(jsonResponse({ ...expense, addedBy: 'Others: Arun' }, 201))
+            .mockResolvedValueOnce(jsonResponse({ ...expense, addedBy: 'Cash' }, 201))
         const user = userEvent.setup()
 
         render(<ExpensesManager />)
 
         await screen.findByRole('heading', { name: 'Expense entries' })
         expect(screen.queryByLabelText(/ke bhai/)).not.toBeInTheDocument()
-        await user.click(screen.getByRole('radio', { name: 'Others' }))
-
-        const otherName = screen.getByLabelText(/ke bhai/)
-        expect(otherName).toBeRequired()
+        expect(screen.queryByRole('radio', { name: 'Others' })).not.toBeInTheDocument()
+        await user.click(screen.getByRole('radio', { name: 'Cash' }))
+        expect(screen.queryByLabelText(/ke bhai/)).not.toBeInTheDocument()
         await user.type(screen.getByLabelText('Title'), 'Vegetables')
         await user.type(screen.getByLabelText('Amount (INR)'), '75')
         await user.click(screen.getByRole('button', { name: 'Add expense' }))
-        expect(await screen.findByRole('alert')).toHaveTextContent('Enter a name for Others.')
-        expect(fetchMock).toHaveBeenCalledTimes(1)
-
-        await user.type(otherName, '  Arun  ')
-        await user.click(screen.getByRole('button', { name: 'Add expense' }))
-
         expect(fetchMock).toHaveBeenNthCalledWith(
             2,
             '/api/expenses',
             expect.objectContaining({
-                body: JSON.stringify({ addedBy: 'Others', amount: 75, description: null, title: 'Vegetables', keBhai: 'Arun' }),
+                body: JSON.stringify({ addedBy: 'Cash', amount: 75, description: null, title: 'Vegetables' }),
                 credentials: 'include',
                 method: 'POST',
             }),
         )
+        expect(await screen.findByText('Expense added.')).toBeInTheDocument()
+        expect(within(screen.getByRole('table', { name: 'Recorded expenses' })).getByText('Cash')).toBeInTheDocument()
+    })
+
+    it('prefills, updates, and displays a past expense', async () => {
+        const updatedExpense = { ...expense, addedBy: 'Cash', amount: 95.5, description: 'Updated market run', title: 'Groceries' }
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse([{ ...expense, addedBy: 'Dinda' }]))
+            .mockResolvedValueOnce(jsonResponse(updatedExpense))
+        const user = userEvent.setup()
+
+        render(<ExpensesManager />)
+        const expenseTable = await screen.findByRole('table', { name: 'Recorded expenses' })
+        await user.click(within(expenseTable).getByRole('button', { name: 'Edit Vegetables' }))
+
+        expect(screen.getByRole('heading', { name: 'Edit expense details' })).toBeInTheDocument()
+        expect(screen.getByLabelText('Title')).toHaveValue('Vegetables')
+        expect(screen.getByLabelText('Amount (INR)')).toHaveValue(75)
+        expect(screen.getByRole('radio', { name: 'Dinda' })).toBeChecked()
+        expect(screen.getByLabelText('Description')).toHaveValue('Morning market')
+
+        await user.clear(screen.getByLabelText('Title'))
+        await user.type(screen.getByLabelText('Title'), 'Groceries')
+        await user.clear(screen.getByLabelText('Amount (INR)'))
+        await user.type(screen.getByLabelText('Amount (INR)'), '95.50')
+        await user.click(screen.getByRole('radio', { name: 'Cash' }))
+        await user.clear(screen.getByLabelText('Description'))
+        await user.type(screen.getByLabelText('Description'), 'Updated market run')
+        await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+        expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/expenses/2', expect.objectContaining({
+            body: JSON.stringify({ addedBy: 'Cash', amount: 95.5, description: 'Updated market run', title: 'Groceries' }),
+            credentials: 'include',
+            method: 'PUT',
+        }))
+        expect(await screen.findByText('Expense updated.')).toBeInTheDocument()
+        expect(within(expenseTable).getByText('Groceries')).toBeInTheDocument()
+        expect(within(expenseTable).getByText('₹95.50')).toBeInTheDocument()
+        expect(within(expenseTable).getByText('Updated market run')).toBeInTheDocument()
+        expect(within(expenseTable).getByText('Cash')).toBeInTheDocument()
+    })
+
+    it('preserves legacy attribution when editing an older expense', async () => {
+        const legacyExpense = { ...expense, addedBy: 'Others: Arun' }
+        const updatedExpense = { ...legacyExpense, amount: 80, title: 'Updated supplies' }
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse([legacyExpense]))
+            .mockResolvedValueOnce(jsonResponse(updatedExpense))
+        const user = userEvent.setup()
+
+        render(<ExpensesManager />)
+        const expenseTable = await screen.findByRole('table', { name: 'Recorded expenses' })
+        await user.click(within(expenseTable).getByRole('button', { name: 'Edit Vegetables' }))
+        expect(screen.getByText('Existing attribution retained: Others: Arun')).toBeInTheDocument()
+        expect(screen.getByRole('radiogroup', { name: 'Added by' }).querySelector('fieldset')).toBeNull()
+        expect(screen.getByRole('radio', { name: 'Cash' })).toBeDisabled()
+        await user.clear(screen.getByLabelText('Title'))
+        await user.type(screen.getByLabelText('Title'), 'Updated supplies')
+        await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+        expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/expenses/2', expect.objectContaining({
+            body: JSON.stringify({ addedBy: null, amount: 75, description: 'Morning market', title: 'Updated supplies' }),
+            method: 'PUT',
+        }))
+        expect(await screen.findByText('Others: Arun', { selector: 'td' })).toBeInTheDocument()
+    })
+
+    it('cancels an expense edit without changing the saved row', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse([expense]))
+        const user = userEvent.setup()
+        render(<ExpensesManager />)
+        const expenseTable = await screen.findByRole('table', { name: 'Recorded expenses' })
+        await user.click(within(expenseTable).getByRole('button', { name: 'Edit Vegetables' }))
+        await user.clear(screen.getByLabelText('Title'))
+        await user.type(screen.getByLabelText('Title'), 'Unsaved title')
+        await user.click(screen.getByRole('button', { name: 'Cancel edit' }))
+
+        expect(screen.getByRole('heading', { name: 'Add an expense' })).toBeInTheDocument()
+        expect(within(expenseTable).getByText('Vegetables')).toBeInTheDocument()
+        expect(within(expenseTable).queryByText('Unsaved title')).not.toBeInTheDocument()
     })
 
     it('shows profits, expenses, and revenue with their saved entries', async () => {
@@ -330,6 +456,30 @@ describe('financial views', () => {
         expect(within(profitTable).getByText('₹400.00')).toBeInTheDocument()
         expect(within(expenseTable).getByText('Vegetables')).toBeInTheDocument()
         expect(within(expenseTable).getByText('₹75.00')).toBeInTheDocument()
+    })
+
+    it('refreshes balance-sheet totals and expenses after a new expense is recorded', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(jsonResponse({ expenses: 75, profits: 325, refunds: 0, revenue: 400 }))
+            .mockResolvedValueOnce(jsonResponse([paidOrder]))
+            .mockResolvedValueOnce(jsonResponse([expense]))
+            .mockResolvedValueOnce(jsonResponse({ expenses: 125, profits: 275, refunds: 0, revenue: 400 }))
+            .mockResolvedValueOnce(jsonResponse([paidOrder]))
+            .mockResolvedValueOnce(jsonResponse([{ ...expense, amount: 125, id: 4, title: 'Updated supplies' }]))
+        const user = userEvent.setup()
+
+        render(<BalanceSheetManager />)
+
+        const getExpenseMetric = () => screen.getByText('Recorded operational costs').closest('section')!
+        expect(within(await screen.findByText('Recorded operational costs').then((label) => label.closest('section')!))
+            .getByText('₹75.00')).toBeInTheDocument()
+
+        await user.click(screen.getByRole('button', { name: 'Refresh balance sheet' }))
+
+        await waitFor(() => expect(within(getExpenseMetric()).getByText('₹125.00')).toBeInTheDocument())
+        const expenseTable = screen.getByRole('table', { name: 'Expense entries' })
+        expect(within(expenseTable).getByText('Updated supplies')).toBeInTheDocument()
+        expect(fetchMock).toHaveBeenCalledTimes(6)
     })
 
     it('shows refund adjustments separately and includes them in the PDF export', async () => {

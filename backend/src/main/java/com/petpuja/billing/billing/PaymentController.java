@@ -99,7 +99,7 @@ public class PaymentController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Cash and online amounts must add up to the bill total");
         }
-        bill.markPaid(request.paymentMethod(), Instant.now(), cashAmount, onlineAmount);
+        bill.markPaid(request.paymentMethod(), Instant.now(), cashAmount, onlineAmount, request.upiQrProvider());
 
         var savedBill = billRepository.save(bill);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(savedBill));
@@ -121,6 +121,7 @@ public class PaymentController {
                 bill.getTotal(),
                 bill.getCashAmount(),
                 bill.getOnlineAmount(),
+                bill.getUpiQrProvider(),
                 bill.getLines().stream()
                         .map(line -> new PaidOrderResponse.PaidOrderLineResponse(
                                 line.getDisplayName(),
@@ -141,6 +142,7 @@ public class PaymentController {
             @NotBlank @Size(max = 30) @Pattern(regexp = "(?:(?:Table|Outdoor) [1-9][0-9]*|Committee .{1,20})") String tableName,
             @NotNull PaymentMethod paymentMethod,
             @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal cashAmount,
-            @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal onlineAmount) {
+            @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal onlineAmount,
+            UpiQrProvider upiQrProvider) {
     }
 }

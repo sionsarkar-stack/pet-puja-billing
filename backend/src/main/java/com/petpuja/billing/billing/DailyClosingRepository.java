@@ -10,4 +10,9 @@ public interface DailyClosingRepository extends JpaRepository<DailyClosing, Long
     boolean existsByClosingDate(LocalDate closingDate);
 
     List<DailyClosing> findAllByOrderByClosingDateDesc();
+
+    List<DailyClosing> findAllByOrderByClosedAtAsc();
+
+    java.util.Optional<DailyClosing> findTopByClosedAtLessThanEqualOrderByClosedAtDesc(
+            java.time.Instant closedAt);
 }

@@ -3,16 +3,17 @@ import {
     apiBaseUrl,
     currencyFormatter,
     formatDateTime,
+    getDateInputValue,
     isExpense,
     isExpenses,
     type Expense,
 } from './financial'
+import { downloadExpenseWorkbook, getExpenseExportEntries, type ExpenseExportPeriod } from './expenseExport'
 
 type ExpenseDraft = {
     title: string
     amount: string
     addedBy: AddedByOption | ''
-    keBhai: string
     description: string
 }
 
@@ -21,23 +22,32 @@ type ExpenseMessage = {
     text: string
 }
 
-const addedByOptions = ['Rimo', 'Rjoe', 'Rishi', 'Dinda', 'Others'] as const
+const addedByOptions = ['Rimo', 'Rjoe', 'Rishi', 'Dinda', 'Cash'] as const
 type AddedByOption = typeof addedByOptions[number]
 
 const emptyDraft: ExpenseDraft = {
     title: '',
     amount: '',
     addedBy: '',
-    keBhai: '',
     description: '',
+}
+
+function isAddedByOption(value: string): value is AddedByOption {
+    return addedByOptions.some((option) => option === value)
 }
 
 function ExpensesManager() {
     const [expenses, setExpenses] = useState<Expense[]>([])
     const [draft, setDraft] = useState<ExpenseDraft>(emptyDraft)
+    const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [isSaving, setIsSaving] = useState(false)
     const [message, setMessage] = useState<ExpenseMessage | null>(null)
+    const [exportPeriod, setExportPeriod] = useState<ExpenseExportPeriod>('day')
+    const [exportDate, setExportDate] = useState(() => getDateInputValue(new Date()) ?? '')
+    const [isExporting, setIsExporting] = useState(false)
+    const [exportMessage, setExportMessage] = useState<ExpenseMessage | null>(null)
+    const [loadFailed, setLoadFailed] = useState(false)
 
     useEffect(() => {
         const controller = new AbortController()
@@ -61,6 +71,7 @@ function ExpensesManager() {
                 setExpenses(savedExpenses)
             } catch (error: unknown) {
                 if (error instanceof DOMException && error.name === 'AbortError') return
+                setLoadFailed(true)
                 setMessage({ tone: 'error', text: 'We could not load expenses. Please try again.' })
             } finally {
                 if (!controller.signal.aborted) {
@@ -78,6 +89,49 @@ function ExpensesManager() {
         setDraft((currentDraft) => ({ ...currentDraft, [field]: value }))
     }
 
+    function startEditing(expense: Expense) {
+        setEditingExpenseId(expense.id)
+        setDraft({
+            title: expense.title,
+            amount: String(expense.amount),
+            addedBy: isAddedByOption(expense.addedBy) ? expense.addedBy : '',
+            description: expense.description ?? '',
+        })
+        setMessage(null)
+        document.getElementById('expense-title')?.focus()
+    }
+
+    function cancelEditing() {
+        setEditingExpenseId(null)
+        setDraft(emptyDraft)
+        setMessage(null)
+    }
+
+    async function exportExpenses() {
+        setExportMessage(null)
+        setIsExporting(true)
+        try {
+            const now = new Date()
+            const entries = getExpenseExportEntries(expenses, exportPeriod, exportDate, now)
+            if (entries.length === 0) {
+                setExportMessage({ tone: 'error', text: 'No expenses recorded for the selected period.' })
+                return
+            }
+            const fileDate = exportPeriod === 'all' ? getDateInputValue(now) : exportDate
+            await downloadExpenseWorkbook(entries, `expenses-${exportPeriod}-${fileDate}.xlsx`)
+            setExportMessage({ tone: 'success', text: 'Expenses exported to Excel.' })
+        } catch {
+            setExportMessage({ tone: 'error', text: 'Could not export expenses. Check the selected date and try again.' })
+        } finally {
+            setIsExporting(false)
+        }
+    }
+
+    const editedExpenseForForm = expenses.find((expense) => expense.id === editingExpenseId)
+    const preservesEditedAddedBy = editingExpenseId !== null
+        && editedExpenseForForm !== undefined
+        && !isAddedByOption(editedExpenseForForm.addedBy)
+
     async function saveExpense(event: FormEvent<HTMLFormElement>) {
         event.preventDefault()
 
@@ -87,31 +141,24 @@ function ExpensesManager() {
             setMessage({ tone: 'error', text: 'Enter an expense title and an amount greater than zero.' })
             return
         }
-        if (!draft.addedBy) {
+        if (!draft.addedBy && !preservesEditedAddedBy) {
             setMessage({ tone: 'error', text: 'Select who added this expense.' })
             return
         }
-        const keBhai = draft.keBhai.trim()
-        if (draft.addedBy === 'Others' && !keBhai) {
-            setMessage({ tone: 'error', text: 'Enter a name for Others.' })
-            return
-        }
-
         setIsSaving(true)
         setMessage(null)
 
         try {
-            const response = await fetch(`${apiBaseUrl}/api/expenses`, {
+            const response = await fetch(`${apiBaseUrl}/api/expenses${editingExpenseId === null ? '' : `/${editingExpenseId}`}`, {
                 body: JSON.stringify({
-                    addedBy: draft.addedBy,
+                    addedBy: draft.addedBy || null,
                     amount,
                     description: draft.description.trim() || null,
                     title,
-                    ...(draft.addedBy === 'Others' ? { keBhai } : {}),
                 }),
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                method: 'POST',
+                method: editingExpenseId === null ? 'POST' : 'PUT',
             })
 
             if (!response.ok) {
@@ -123,9 +170,12 @@ function ExpensesManager() {
                 throw new Error('Expense save response has an unexpected shape')
             }
 
-            setExpenses((currentExpenses) => [savedExpense, ...currentExpenses])
+            setExpenses((currentExpenses) => editingExpenseId === null
+                ? [savedExpense, ...currentExpenses]
+                : currentExpenses.map((expense) => expense.id === savedExpense.id ? savedExpense : expense))
             setDraft(emptyDraft)
-            setMessage({ tone: 'success', text: 'Expense added.' })
+            setEditingExpenseId(null)
+            setMessage({ tone: 'success', text: editingExpenseId === null ? 'Expense added.' : 'Expense updated.' })
         } catch {
             setMessage({ tone: 'error', text: 'We could not save this expense. Please try again.' })
         } finally {
@@ -146,8 +196,8 @@ function ExpensesManager() {
             <div className="expenses-layout">
                 <form className="expense-editor" noValidate onSubmit={saveExpense}>
                     <div className="expense-editor-heading">
-                        <p className="eyebrow">New expense</p>
-                        <h2>Add an expense</h2>
+                        <p className="eyebrow">{editingExpenseId === null ? 'New expense' : 'Edit expense'}</p>
+                        <h2>{editingExpenseId === null ? 'Add an expense' : 'Edit expense details'}</h2>
                     </div>
 
                     <div className="field-group">
@@ -175,8 +225,8 @@ function ExpensesManager() {
                         />
                     </div>
 
-                    <fieldset aria-required="true" className="expense-added-by" disabled={isSaving}>
-                        <legend>Added by <span aria-hidden="true">*</span></legend>
+                    <fieldset aria-required={!preservesEditedAddedBy} className="expense-added-by" disabled={isSaving || (editingExpenseId !== null && preservesEditedAddedBy)}>
+                        <legend>Added by {!preservesEditedAddedBy && <span aria-hidden="true">*</span>}</legend>
                         <div aria-label="Added by" className="expense-added-by-options" role="radiogroup">
                             {addedByOptions.map((option, index) => <label key={option}>
                                 <input
@@ -190,21 +240,8 @@ function ExpensesManager() {
                                 <span>{option}</span>
                             </label>)}
                         </div>
+                        {editingExpenseId !== null && preservesEditedAddedBy && editedExpenseForForm && <p className="expense-legacy-added-by">Existing attribution retained: {editedExpenseForForm.addedBy}</p>}
                     </fieldset>
-
-                    {draft.addedBy === 'Others' && (
-                        <div className="field-group">
-                            <label htmlFor="expense-ke-bhai">ke bhai <span aria-hidden="true">*</span></label>
-                            <input
-                                disabled={isSaving}
-                                id="expense-ke-bhai"
-                                maxLength={72}
-                                onChange={(event) => updateDraft('keBhai', event.target.value)}
-                                required
-                                value={draft.keBhai}
-                            />
-                        </div>
-                    )}
 
                     <div className="field-group">
                         <label htmlFor="expense-description">Description</label>
@@ -228,9 +265,12 @@ function ExpensesManager() {
                         </p>
                     )}
 
-                    <button className="expense-save" disabled={isSaving} type="submit">
-                        {isSaving ? 'Saving...' : 'Add expense'}
-                    </button>
+                    <div className="expense-form-actions">
+                        <button className="expense-save" disabled={isSaving} type="submit">
+                            {isSaving ? 'Saving...' : editingExpenseId === null ? 'Add expense' : 'Save changes'}
+                        </button>
+                        {editingExpenseId !== null && <button className="expense-cancel" disabled={isSaving} onClick={cancelEditing} type="button">Cancel edit</button>}
+                    </div>
                 </form>
 
                 <section aria-labelledby="recorded-expenses-heading" className="financial-list">
@@ -241,6 +281,35 @@ function ExpensesManager() {
                         </div>
                         <span>{expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'}</span>
                     </header>
+
+                    <div aria-label="Expense export" className="expense-export-controls" role="group">
+                        <label>
+                            <span>Export period</span>
+                            <select disabled={isExporting} onChange={(event) => {
+                                setExportPeriod(event.target.value as ExpenseExportPeriod)
+                                setExportMessage(null)
+                            }} value={exportPeriod}>
+                                <option value="day">Day</option>
+                                <option value="month">Month</option>
+                                <option value="quarter">Quarter</option>
+                                <option value="year">Year</option>
+                                <option value="all">Till now</option>
+                            </select>
+                        </label>
+                        {exportPeriod !== 'all' && <label>
+                            <span>Export date (IST)</span>
+                            <input disabled={isExporting} onChange={(event) => {
+                                setExportDate(event.target.value)
+                                setExportMessage(null)
+                            }} type="date" value={exportDate} />
+                        </label>}
+                        <button className="expense-export-button" disabled={isLoading || loadFailed || isSaving || isExporting || expenses.length === 0 || (exportPeriod !== 'all' && !exportDate)} onClick={() => void exportExpenses()} type="button">
+                            {isExporting ? 'Exporting...' : 'Download Excel'}
+                        </button>
+                    </div>
+                    {exportMessage && <p className={`financial-message financial-message-${exportMessage.tone}`} role={exportMessage.tone === 'error' ? 'alert' : 'status'}>
+                        {exportMessage.text}
+                    </p>}
 
                     {isLoading && <p className="financial-empty">Loading expenses...</p>}
                     {!isLoading && expenses.length === 0 && <p className="financial-empty">No expenses added yet.</p>}
@@ -255,6 +324,7 @@ function ExpensesManager() {
                                         <th scope="col">Added by</th>
                                         <th scope="col">Description</th>
                                         <th scope="col">Amount</th>
+                                        <th scope="col">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -265,6 +335,9 @@ function ExpensesManager() {
                                             <td>{expense.addedBy}</td>
                                             <td>{expense.description ?? '—'}</td>
                                             <td>{currencyFormatter.format(expense.amount)}</td>
+                                            <td><div className="expense-row-actions">
+                                                <button aria-label={`Edit ${expense.title}`} className="expense-edit-button" disabled={isSaving || isExporting} onClick={() => startEditing(expense)} type="button">Edit</button>
+                                            </div></td>
                                         </tr>
                                     ))}
                                 </tbody>

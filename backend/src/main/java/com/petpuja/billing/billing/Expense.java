@@ -48,6 +48,13 @@ public class Expense {
         return new Expense(title, amount, addedBy, description);
     }
 
+    public void updateDetails(String title, BigDecimal amount, String addedBy, String description) {
+        this.title = title;
+        this.amount = amount;
+        this.addedBy = addedBy;
+        this.description = description;
+    }
+
     @PrePersist
     void initializeCreatedAt() {
         createdAt = Instant.now();

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { apiBaseUrl, currencyFormatter, formatDateTime, isPaidOrders, type PaidOrder } from './financial'
 import { getBusinessDateInputValue } from './businessDay'
-import { getFoodRevenue, getPeriodLabel, getSectionRevenue, type ProfitPeriod } from './profitFact'
+import { getFoodRevenue, getPaymentMethodRevenue, getPeriodLabel, getSectionRevenue, type ProfitPeriod } from './profitFact'
 
-type RevenueView = 'food' | 'section'
+type RevenueView = 'food' | 'section' | 'payment'
 type FoodSortField = 'itemName' | 'quantity' | 'amount'
 type SortDirection = 'asc' | 'desc'
 
@@ -80,6 +80,9 @@ function ProfitFactManager() {
     const foodRevenue = asOf === null
         ? []
         : getFoodRevenue(paidOrders, period, selectedDate, asOf)
+    const paymentMethodRevenue = asOf === null
+        ? []
+        : getPaymentMethodRevenue(paidOrders, period, selectedDate, asOf)
     const filteredFoodRevenue = foodRevenue
         .filter(({ itemName }) => itemName.toLocaleLowerCase().includes(foodSearch.trim().toLocaleLowerCase()))
         .sort((left, right) => {
@@ -89,10 +92,15 @@ function ProfitFactManager() {
             return difference === 0 ? left.itemName.localeCompare(right.itemName) : direction * difference
         })
     const totalRevenue = foodRevenue.reduce((total, entry) => total + entry.amount, 0)
+    const totalPaymentRevenue = paymentMethodRevenue.reduce((total, entry) => total + entry.amount, 0)
     const totalFoodQuantity = foodRevenue.reduce((total, entry) => total + entry.quantity, 0)
     const maxFoodRevenue = foodRevenue.reduce((maximum, entry) => Math.max(maximum, entry.amount), 0)
     const periodLabel = getPeriodLabel(period, selectedDate)
     const pieBackground = getPieBackground(sectionRevenue)
+    const paymentMethodPieBackground = getPieBackground(paymentMethodRevenue)
+    const reportPanelId = view === 'food'
+        ? 'profit-fact-food-panel'
+        : view === 'payment' ? 'profit-fact-payment-panel' : 'profit-fact-section-panel'
 
     function toggleFoodSort(field: FoodSortField) {
         setFoodSort((currentSort) => ({
@@ -108,7 +116,7 @@ function ProfitFactManager() {
                     <p className="eyebrow">Financial reporting</p>
                     <h1>Revenue</h1>
                 </div>
-                <p>Explore paid sales by food item or menu section.</p>
+                <p>Explore paid sales by food item, menu section, or payment method.</p>
             </header>
 
             <div aria-label="Revenue view" className="profit-fact-tabs" role="tablist">
@@ -128,6 +136,14 @@ function ProfitFactManager() {
                     role="tab"
                     type="button"
                 >By section</button>
+                <button
+                    aria-controls="profit-fact-payment-panel"
+                    aria-selected={view === 'payment'}
+                    id="profit-fact-payment-tab"
+                    onClick={() => setView('payment')}
+                    role="tab"
+                    type="button"
+                >By payment method</button>
             </div>
 
             <div className="profit-fact-controls">
@@ -173,18 +189,20 @@ function ProfitFactManager() {
                 <p className="financial-message financial-message-error" role="alert">{errorMessage}</p>
             )}
             {!isLoading && !errorMessage && asOf !== null && (
-                <section aria-labelledby="profit-fact-report-heading" className="profit-fact-report">
+                <section aria-labelledby={`${view === 'food' ? 'profit-fact-food' : view === 'payment' ? 'profit-fact-payment' : 'profit-fact-section'}-tab`} className="profit-fact-report" id={reportPanelId} role="tabpanel">
                     <header className="profit-fact-report-heading">
                         <div>
                             <p className="eyebrow">{periodLabel}</p>
-                            <h2 id="profit-fact-report-heading">{view === 'food' ? 'By food' : 'By section'}</h2>
+                            <h2 id="profit-fact-report-heading">{view === 'food' ? 'By food' : view === 'payment' ? 'By payment method' : 'By section'}</h2>
                         </div>
                         <p>Data refreshed {formatDateTime(asOf.toISOString())}</p>
                     </header>
                     <p className="profit-fact-note">
                         {view === 'food'
                             ? 'Bill discounts and refunds are allocated proportionally by line value. Food add-ons are included with their parent item.'
-                            : 'Bill discounts and refunds are allocated proportionally by line value. Operating expenses are not allocated to sections.'}
+                            : view === 'payment'
+                                ? 'Refunds are allocated proportionally across cash and online receipts. Online receipts are grouped by the QR account used; older payments may show QR not recorded.'
+                                : 'Bill discounts and refunds are allocated proportionally by line value. Operating expenses are not allocated to sections.'}
                     </p>
 
                     {view === 'section' && sectionRevenue.some(({ amount }) => amount > 0) ? (
@@ -216,6 +234,35 @@ function ProfitFactManager() {
                         </div>
                     ) : view === 'section' ? (
                         <p className="financial-empty">No section revenue in this period.</p>
+                    ) : view === 'payment' && paymentMethodRevenue.some(({ amount }) => amount > 0) ? (
+                        <div className="profit-fact-chart-layout">
+                            <div
+                                aria-label={`Payment-method revenue pie chart for ${periodLabel}`}
+                                className="profit-fact-pie"
+                                role="img"
+                                style={{ background: paymentMethodPieBackground }}
+                            />
+                            <div className="profit-fact-breakdown">
+                                <p className="profit-fact-total">{currencyFormatter.format(totalPaymentRevenue)}</p>
+                                <span>Total paid sales</span>
+                                <ul aria-label="Payment method revenue">
+                                    {paymentMethodRevenue.map((entry, index) => (
+                                        <li key={entry.label}>
+                                            <span
+                                                aria-hidden="true"
+                                                className="profit-fact-swatch"
+                                                style={{ backgroundColor: sectionColors[index % sectionColors.length] }}
+                                            />
+                                            <span>{entry.label}</span>
+                                            <strong>{currencyFormatter.format(entry.amount)}</strong>
+                                            <small>{totalPaymentRevenue > 0 ? `${(entry.amount / totalPaymentRevenue * 100).toFixed(1)}%` : '0.0%'}</small>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                    ) : view === 'payment' ? (
+                        <p className="financial-empty">No payment revenue in this period.</p>
                     ) : (
                         <>
                             <div className="profit-fact-food-summary">

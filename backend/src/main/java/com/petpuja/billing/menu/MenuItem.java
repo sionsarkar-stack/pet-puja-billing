@@ -15,6 +15,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -50,6 +51,10 @@ public class MenuItem {
 
 	@OneToMany(mappedBy = "menuItem", cascade = CascadeType.ALL, orphanRemoval = true)
 	private List<MenuItemAddOn> addOns = new ArrayList<>();
+
+	@OneToMany(mappedBy = "menuItem", cascade = CascadeType.ALL, orphanRemoval = true)
+	@OrderBy("position ASC")
+	private List<MenuItemRawMaterial> rawMaterials = new ArrayList<>();
 
 	@ManyToMany
 	@JoinTable(name = "menu_item_combo_item", joinColumns = @JoinColumn(name = "menu_item_id"), inverseJoinColumns = @JoinColumn(name = "component_menu_item_id"))
@@ -150,6 +155,15 @@ public class MenuItem {
 
 	public List<MenuItemAddOn> getAddOns() {
 		return addOns;
+	}
+
+	public List<MenuItemRawMaterial> getRawMaterials() {
+		return rawMaterials;
+	}
+
+	public void replaceRawMaterials(List<MenuItemRawMaterial> rawMaterials) {
+		this.rawMaterials.clear();
+		this.rawMaterials.addAll(rawMaterials);
 	}
 
 	public List<MenuItem> getComboItems() {

@@ -19,6 +19,7 @@ public record PaidOrderResponse(
                 BigDecimal total,
                 BigDecimal cashAmount,
                 BigDecimal onlineAmount,
+                UpiQrProvider upiQrProvider,
                 List<PaidOrderLineResponse> lines,
                 BillRefundResponse refund) {
 

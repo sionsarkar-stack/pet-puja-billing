@@ -1,4 +1,5 @@
 export type PaymentMethod = 'CASH' | 'ONLINE' | 'SPLIT'
+export type SavedUpiQrProvider = 'PRIMARY' | 'SECONDARY'
 
 export type RefundType = 'VOID' | 'REFUND'
 
@@ -28,6 +29,7 @@ export type PaidOrder = {
     orderDescription?: string | null
     customerName?: string | null
     paymentMethod: PaymentMethod
+    upiQrProvider?: SavedUpiQrProvider | null
     cashAmount?: number
     onlineAmount?: number
     paidAt: string
@@ -93,6 +95,14 @@ export type BalanceSheet = {
     revenue: number
 }
 
+export type IndividualSavedTotal = {
+    source: string
+    income: number
+    refunds: number
+    expenses: number
+    difference: number
+}
+
 export type DailyClosing = {
     id: number
     closingDate: string
@@ -106,6 +116,7 @@ export type DailyClosing = {
     paidOrderCount: number
     expenseCount: number
     closedAt: string
+    individualTotals?: IndividualSavedTotal[]
 }
 
 export type DailyClosingPreview = {
@@ -120,6 +131,7 @@ export type DailyClosingPreview = {
     revenue: number
     paidOrderCount: number
     expenseCount: number
+    individualTotals?: IndividualSavedTotal[]
 }
 
 export type BusinessDayStatus = {
@@ -226,6 +238,7 @@ export function isPaidOrder(value: unknown): value is PaidOrder {
         && (!('orderDescription' in value) || value.orderDescription === null || typeof value.orderDescription === 'string')
         && (!('customerName' in value) || typeof value.customerName === 'string' || value.customerName === null)
         && isPaymentMethod(value.paymentMethod)
+        && (!('upiQrProvider' in value) || value.upiQrProvider === null || value.upiQrProvider === 'PRIMARY' || value.upiQrProvider === 'SECONDARY')
         && typeof value.paidAt === 'string'
         && (!('subtotal' in value) || typeof value.subtotal === 'number')
         && (!('discountPercent' in value) || typeof value.discountPercent === 'number')
@@ -302,6 +315,15 @@ export function isBalanceSheet(value: unknown): value is BalanceSheet {
         && typeof value.revenue === 'number'
 }
 
+function isIndividualSavedTotals(value: unknown): value is IndividualSavedTotal[] {
+    return Array.isArray(value) && value.every((total) => isRecord(total)
+        && typeof total.source === 'string'
+        && typeof total.income === 'number'
+        && typeof total.refunds === 'number'
+        && typeof total.expenses === 'number'
+        && typeof total.difference === 'number')
+}
+
 export function isDailyClosing(value: unknown): value is DailyClosing {
     return isRecord(value)
         && typeof value.id === 'number'
@@ -316,6 +338,7 @@ export function isDailyClosing(value: unknown): value is DailyClosing {
         && typeof value.paidOrderCount === 'number'
         && typeof value.expenseCount === 'number'
         && typeof value.closedAt === 'string'
+        && (!('individualTotals' in value) || isIndividualSavedTotals(value.individualTotals))
 }
 
 export function isDailyClosings(value: unknown): value is DailyClosing[] {
@@ -335,6 +358,7 @@ export function isDailyClosingPreview(value: unknown): value is DailyClosingPrev
         && typeof value.revenue === 'number'
         && typeof value.paidOrderCount === 'number'
         && typeof value.expenseCount === 'number'
+        && (!('individualTotals' in value) || isIndividualSavedTotals(value.individualTotals))
 }
 
 export function isBusinessDayStatus(value: unknown): value is BusinessDayStatus {

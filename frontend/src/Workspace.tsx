@@ -14,6 +14,7 @@ import { useStackedTables } from './stackedTables'
 import { Watermark } from './Watermark'
 import { apiBaseUrl, isBusinessDayStatus, type BusinessDayStatus } from './financial'
 import type { ThemePreference } from './theme'
+import type { UpiQrProvider } from './upiPayment'
 
 type WorkspaceProps = {
     isLoggingOut: boolean
@@ -53,6 +54,7 @@ function Workspace({ isLoggingOut, mode, onLogout, onThemeChange, theme, usernam
     })
     const [businessDayStatusLoaded, setBusinessDayStatusLoaded] = useState(false)
     const [hasOpenedTable, setHasOpenedTable] = useState(true)
+    const [upiQrProvider, setUpiQrProvider] = useState<UpiQrProvider>('primary')
     const shellRef = useRef<HTMLDivElement>(null)
     useStackedTables(shellRef)
 
@@ -282,7 +284,7 @@ function Workspace({ isLoggingOut, mode, onLogout, onThemeChange, theme, usernam
                         id="panel-menu"
                         role="tabpanel"
                     >
-                        <DetailsManager mode={mode} onThemeChange={onThemeChange} theme={theme} />
+                        <DetailsManager mode={mode} onThemeChange={onThemeChange} theme={theme} upiQrProvider={upiQrProvider} onUpiQrProviderChange={setUpiQrProvider} />
                     </section>
                 )}
 
@@ -294,7 +296,7 @@ function Workspace({ isLoggingOut, mode, onLogout, onThemeChange, theme, usernam
                         id="panel-table"
                         role="tabpanel"
                     >
-                        <TableManager canManageCommitteeMembers={mode === 'ADMIN'} isActive={activeTab === 'table'} />
+                        <TableManager canManageCommitteeMembers={mode === 'ADMIN'} isActive={activeTab === 'table'} upiQrProvider={upiQrProvider} />
                     </section>
                 )}
 

@@ -46,13 +46,30 @@ vi.mock('./DailyClosingManager', () => ({
 vi.mock('./ExpensesManager', () => ({ default: () => <p>Expenses content</p> }))
 vi.mock('./ProfitFactManager', () => ({ default: () => <p>Revenue content</p> }))
 vi.mock('./HistoryManager', () => ({ default: () => <p>History content</p> }))
-vi.mock('./DetailsManager', () => ({ default: () => <p>Details content</p> }))
-vi.mock('./TableManager', () => ({ default: () => <p>Table content</p> }))
+vi.mock('./DetailsManager', () => ({
+    default: ({ upiQrProvider, onUpiQrProviderChange }: {
+        upiQrProvider: string; onUpiQrProviderChange: (provider: 'secondary') => void
+    }) => <div><p>Details content</p><p>Selected QR: {upiQrProvider}</p><button onClick={() => onUpiQrProviderChange('secondary')}>Choose secondary QR</button></div>
+}))
+vi.mock('./TableManager', () => ({ default: ({ upiQrProvider }: { upiQrProvider: string }) => <div><p>Table content</p><output aria-label="Table UPI account">{upiQrProvider}</output></div> }))
 
 describe('Workspace', () => {
     afterEach(() => {
         cleanup()
         vi.restoreAllMocks()
+    })
+
+    it('shares the Details QR choice with Table and retains it across navigation', async () => {
+        mockBusinessDayStatus(true)
+        const user = userEvent.setup()
+        render(<Workspace isLoggingOut={false} mode="ADMIN" onLogout={async () => { }} onThemeChange={() => undefined} theme="dark" username="owner" />)
+        const tabs = within(screen.getByRole('tablist', { name: 'Restaurant management' }))
+        await user.click(await tabs.findByRole('tab', { name: 'Details' }))
+        await user.click(screen.getByRole('button', { name: 'Choose secondary QR' }))
+        await user.click(tabs.getByRole('tab', { name: 'Table' }))
+        expect(screen.getByLabelText('Table UPI account')).toHaveTextContent('secondary')
+        await user.click(tabs.getByRole('tab', { name: 'Details' }))
+        expect(screen.getByText('Selected QR: secondary')).toBeInTheDocument()
     })
 
     it('switches management views with keyboard tab navigation', async () => {

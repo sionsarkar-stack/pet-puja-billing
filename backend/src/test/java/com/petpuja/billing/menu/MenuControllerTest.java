@@ -93,6 +93,62 @@ class MenuControllerTest {
         }
 
         @Test
+        void savesAndReplacesMenuItemRawMaterials() throws Exception {
+                var ownerSession = signIn();
+                var item = menuItemRepository.save(MenuItem.create("Masala Dosa", null,
+                                java.math.BigDecimal.ZERO, new java.math.BigDecimal("180.00")));
+
+                mockMvc.perform(put("/api/menu/{menuItemId}/product-details", item.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"rawMaterials":[{"rawMaterial":"Rice batter","quantity":"150 g"},{"rawMaterial":"Potato","quantity":"80 g"}]}
+                                                """))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.menuItemId").value(item.getId()))
+                                .andExpect(jsonPath("$.rawMaterials.length()").value(2))
+                                .andExpect(jsonPath("$.rawMaterials[0].rawMaterial").value("Rice batter"))
+                                .andExpect(jsonPath("$.rawMaterials[0].quantity").value("150 g"));
+
+                mockMvc.perform(put("/api/menu/{menuItemId}/product-details", item.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"rawMaterials":[{"rawMaterial":"Rice batter","quantity":"175 g"}]}
+                                                """))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.rawMaterials.length()").value(1))
+                                .andExpect(jsonPath("$.rawMaterials[0].quantity").value("175 g"));
+
+                mockMvc.perform(get("/api/menu/{menuItemId}/product-details", item.getId()).session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.rawMaterials.length()").value(1));
+
+                mockMvc.perform(put("/api/menu/{menuItemId}/product-details", item.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("{\"rawMaterials\":[]}"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.rawMaterials").isEmpty());
+
+                mockMvc.perform(put("/api/menu/{menuItemId}/product-details", item.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"rawMaterials":[{"rawMaterial":"Salt","quantity":"2 g"},{"rawMaterial":" salt ","quantity":"3 g"}]}
+                                                """))
+                                .andExpect(status().isBadRequest());
+
+                mockMvc.perform(put("/api/menu/{menuItemId}/product-details", item.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"rawMaterials":[{"rawMaterial":"Salt","quantity":" "}]}
+                                                """))
+                                .andExpect(status().isBadRequest());
+        }
+
+        @Test
         void rejectsDiscountsAboveOneHundredPercent() throws Exception {
                 mockMvc.perform(post("/api/menu")
                                 .session(signIn())

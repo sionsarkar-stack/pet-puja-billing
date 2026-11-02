@@ -208,7 +208,7 @@ function DiscountManager({ canManage }: { canManage: boolean }) {
         <div className="discount-workspace">
             <header className="discount-page-heading">
                 <div>
-                    <p className="eyebrow">Details / Discount</p>
+                    <p className="eyebrow">Details / Action</p>
                     <h1>Bill discounts</h1>
                 </div>
             </header>

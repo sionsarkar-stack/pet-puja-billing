@@ -5,7 +5,7 @@ import { createOrderDocument } from './orderDocument'
 import { groupOrderLines } from './orderSections'
 import { groupMenuItems } from './menuSections'
 import { useRestaurantConfiguration } from './RestaurantConfiguration'
-import { createUpiPaymentUri } from './upiPayment'
+import { createUpiPaymentUri, getUpiQrVpa, type UpiQrProvider } from './upiPayment'
 import {
     apiBaseUrl,
     currencyFormatter,
@@ -74,6 +74,17 @@ type TableMessage = {
     text: string
 }
 
+type PendingSeatingShift = {
+    fromId: string
+    fromName: string
+    fromDisplayName: string
+    toId: string
+    toName: string
+    toDisplayName: string
+    targetKind: 'table' | 'outdoor'
+    targetNumber: number
+}
+
 type OrderSaveIntent = {
     tableLabel?: string
     orderDescription?: string
@@ -133,8 +144,8 @@ type SeatingStatus = {
     tone: 'available' | 'open' | 'ready'
 }
 
-const initialTableCount = 7
-const initialOutdoorCount = 10
+const initialTableCount = 0
+const initialOutdoorCount = 0
 
 function createSeatingSpots(kind: SeatingSpot['kind'], label: string, count: number): SeatingSpot[] {
     return Array.from({ length: count }, (_, index) => {
@@ -236,6 +247,23 @@ function getSeatingStatus(order: OpenOrderState | undefined): SeatingStatus {
     return { detail: `${itemCount} ${itemLabel} · ${total}`, label: 'Open', tone: 'open' }
 }
 
+function SeatingOrderPreview({ order, id }: { order: OpenOrderState | undefined; id: string }) {
+    if (!order) return null
+    const itemCount = order.lines.reduce((total, line) => total + line.quantity, 0)
+    return <span className="seating-order-preview" id={id}>
+        <span className="seating-order-count">{itemCount} {itemCount === 1 ? 'item' : 'items'}</span>
+        <span className="seating-order-lines">
+            {order.lines.length === 0 && <span className="seating-order-empty">No items yet</span>}
+            {order.lines.map((line) => <span className="seating-order-line" key={getOrderLineKey(line)}>
+                <span className="seating-order-item"><span className="seating-order-quantity">{line.quantity} x</span> {getOrderLineDisplayName(line)}</span>
+                <span className="seating-order-price">{currencyFormatter.format(getLineTotal(line))}</span>
+            </span>)}
+        </span>
+        {(order.discountAmount ?? 0) > 0 && <span className="seating-order-discount"><span>Discount</span><span>-{currencyFormatter.format(order.discountAmount!)}</span></span>}
+        <span className="seating-order-total"><span>Total</span><strong>{currencyFormatter.format(order.total ?? getOrderTotal(order.lines))}</strong></span>
+    </span>
+}
+
 function toOrderLines(openOrder: OpenOrder): OrderLine[] {
     return openOrder.lines.map((line) => ({
         menuItemId: line.menuItemId,
@@ -307,6 +335,7 @@ function getInvoiceReference(createdAt: Date, seatingName: string) {
 type TableManagerProps = {
     isActive?: boolean
     canManageCommitteeMembers?: boolean
+    upiQrProvider?: UpiQrProvider
 }
 
 function mergeOrderLines(existingLines: OrderLine[], additions: OrderLine[]) {
@@ -319,14 +348,25 @@ function mergeOrderLines(existingLines: OrderLine[], additions: OrderLine[]) {
     return lines
 }
 
-function TableManager({ isActive = true, canManageCommitteeMembers = true }: TableManagerProps) {
+function rekeySeatingDraft<T>(drafts: Partial<Record<string, T>>, fromId: string, toId: string, value: T) {
+    const next = { ...drafts }
+    delete next[fromId]
+    next[toId] = value
+    return next
+}
+
+function TableManager({ isActive = true, canManageCommitteeMembers = true, upiQrProvider = 'primary' }: TableManagerProps) {
     const { restaurantName, upiVpa, secondaryUpiVpa = '' } = useRestaurantConfiguration()
     const paidReceiptFrameRef = useRef<HTMLIFrameElement>(null)
     const selectedOrderPanelRef = useRef<HTMLDivElement>(null)
+    const paymentActionsRef = useRef<HTMLElement>(null)
+    const tableNameInputRef = useRef<HTMLInputElement>(null)
     const [menuItems, setMenuItems] = useState<MenuItem[]>([])
     const [isLoading, setIsLoading] = useState(true)
+    const [hasRestoredOrders, setHasRestoredOrders] = useState(false)
     const [tableCount, setTableCount] = useState(initialTableCount)
     const [outdoorCount, setOutdoorCount] = useState(initialOutdoorCount)
+    const [draftSeatingIds, setDraftSeatingIds] = useState<string[]>([])
     const [selectedSeatingId, setSelectedSeatingId] = useState<string | null>(null)
     const [menuSearch, setMenuSearch] = useState('')
     const [isMenuPickerOpen, setIsMenuPickerOpen] = useState(false)
@@ -364,11 +404,12 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
     const [lastOrderSave, setLastOrderSave] = useState<OrderSaveStatus | null>(null)
     const [paymentMethodInProgress, setPaymentMethodInProgress] = useState<PaymentMethod | null>(null)
     const [pendingPaymentMethod, setPendingPaymentMethod] = useState<PaymentMethod | null>(null)
+    const [pendingSeatingShift, setPendingSeatingShift] = useState<PendingSeatingShift | null>(null)
+    const [isShiftingSeating, setIsShiftingSeating] = useState(false)
     const [isSplitPayment, setIsSplitPayment] = useState(false)
     const [splitCashAmount, setSplitCashAmount] = useState('')
     const [splitOnlineAmount, setSplitOnlineAmount] = useState('')
     const [upiQrSeatingId, setUpiQrSeatingId] = useState<string | null>(null)
-    const [upiQrProvider, setUpiQrProvider] = useState<'primary' | 'secondary'>('primary')
     const [lastPaidSeatingId, setLastPaidSeatingId] = useState<string | null>(null)
     const [lastPaidOrder, setLastPaidOrder] = useState<PaidOrder | null>(null)
     const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null)
@@ -377,6 +418,12 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
     const [paidReceiptUrl, setPaidReceiptUrl] = useState<string | null>(null)
     const [isPaidReceiptReadyToPrint, setIsPaidReceiptReadyToPrint] = useState(false)
     const [message, setMessage] = useState<TableMessage | null>(null)
+
+    useEffect(() => {
+        if (selectedSeatingId !== null && draftSeatingIds.includes(selectedSeatingId)) {
+            tableNameInputRef.current?.focus()
+        }
+    }, [selectedSeatingId, draftSeatingIds])
 
     useEffect(() => {
         if (!isActive) return
@@ -424,6 +471,7 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
                     }
 
                     setOrdersBySeating(restoredOrders)
+                    setHasRestoredOrders(true)
                     setTableCount((currentCount) => Math.max(currentCount, restoredTableCount))
                     setOutdoorCount((currentCount) => Math.max(currentCount, restoredOutdoorCount))
                 })
@@ -444,7 +492,7 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
             if (menuResult.status === 'rejected') {
                 setMessage({ tone: 'error', text: 'We could not load the menu. Please try again.' })
             } else if (openOrdersResult.status === 'rejected') {
-                setMessage({ tone: 'error', text: 'We could not restore current orders. The menu is still available.' })
+                setMessage({ tone: 'error', text: 'We could not restore current orders. Please reload before creating a table.' })
             }
 
             setIsLoading(false)
@@ -457,7 +505,10 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
             }
         })
 
-        return () => controller.abort()
+        return () => {
+            controller.abort()
+            setHasRestoredOrders(false)
+        }
     }, [isActive])
 
     useEffect(() => {
@@ -557,10 +608,16 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
         && splitCashPaise > 0 && splitOnlinePaise > 0
         && splitCashPaise + splitOnlinePaise === Math.round(selectedOrderTotal * 100)
     const qrPaymentAmount = isSplitPayment ? (splitOnlinePaise ?? 0) / 100 : selectedOrderTotal
-    const selectedUpiVpa = upiQrProvider === 'secondary' && secondaryUpiVpa.trim() !== ''
-        ? secondaryUpiVpa
-        : upiVpa
-    const isOrderActionInProgress = isOrderSaving || isSavingCommitteeMember || paymentMethodInProgress !== null || pendingPaymentMethod !== null
+    const selectedUpiVpa = getUpiQrVpa(upiQrProvider, upiVpa, secondaryUpiVpa)
+    const selectedUpiAccount = upiQrProvider === 'secondary' && secondaryUpiVpa.trim() !== ''
+        ? 'Secondary'
+        : upiVpa.trim() !== '' ? 'Primary' : 'Secondary'
+    useEffect(() => {
+        if (!isOrderCompleted) return
+        paymentActionsRef.current?.focus({ preventScroll: true })
+        paymentActionsRef.current?.scrollIntoView?.({ block: 'nearest' })
+    }, [isOrderCompleted, selectedSeatingId])
+    const isOrderActionInProgress = isOrderSaving || isSavingCommitteeMember || isShiftingSeating || paymentMethodInProgress !== null || pendingPaymentMethod !== null || pendingSeatingShift !== null
     const menuKeywords = menuSearch.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
     const matchingMenuItems = menuItems.filter((item) => {
         const searchableText = `${item.name} ${item.description ?? ''} ${item.section} ${item.subsection}`.toLocaleLowerCase()
@@ -824,13 +881,27 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
     }
 
     function selectSeating(seatingId: string) {
+        if (selectedSeatingId === seatingId) {
+            clearInvoice()
+            setSelectedSeatingId(null)
+            setIsSplitPayment(false)
+            setSplitCashAmount('')
+            setSplitOnlineAmount('')
+            setUpiQrSeatingId(null)
+            setMenuSearch('')
+            setIsMenuPickerOpen(false)
+            setActiveMenuItemId(null)
+            setIsCreateContactOpen(false)
+            setMessage(null)
+            return
+        }
+
         clearInvoice()
         setCommitteeMessage(null)
         setIsSplitPayment(false)
         setSplitCashAmount('')
         setSplitOnlineAmount('')
         setUpiQrSeatingId(null)
-        setUpiQrProvider('primary')
         setMenuSearch('')
         setIsMenuPickerOpen(false)
         setActiveMenuItemId(null)
@@ -840,6 +911,102 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
         setCustomerSearchStatus('idle')
         setIsCreateContactOpen(false)
         setMessage(null)
+    }
+
+    function requestSeatingShift() {
+        if (selectedSeating === null || selectedSeating.kind === 'committee' || selectedOpenOrder === null
+            || selectedOrderLines.length === 0 || isOrderDetailsDirty || hasInvalidCustomerDetails || hasFailedOrderSave) {
+            if (isOrderDetailsDirty) setMessage({ tone: 'error', text: 'Save the table name, notes, and contact details before shifting this order.' })
+            return
+        }
+        const targetKind = selectedSeating.kind === 'table' ? 'outdoor' : 'table'
+        const targetNumber = (targetKind === 'table' ? tableCount : outdoorCount) + 1
+        const toName = `${targetKind === 'table' ? 'Table' : 'Outdoor'} ${targetNumber}`
+        const toId = `${targetKind}-${targetNumber}`
+        setPendingSeatingShift({
+            fromId: selectedSeating.id,
+            fromName: selectedSeating.name,
+            fromDisplayName: selectedSeatingName,
+            toId,
+            toName,
+            toDisplayName: toName,
+            targetKind,
+            targetNumber,
+        })
+    }
+
+    async function shiftSelectedSeating() {
+        const shift = pendingSeatingShift
+        if (shift === null || selectedSeating?.id !== shift.fromId || isShiftingSeating) return
+        setIsShiftingSeating(true)
+        setMessage(null)
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/open-orders/shift`, {
+                body: JSON.stringify({ fromTableName: shift.fromName, toTableName: shift.toName }),
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                method: 'PUT',
+            })
+            if (response.status === 409) {
+                throw new Error(`${shift.toName} already has an open order. Choose another table.`)
+            }
+            if (response.status === 404) throw new Error('This open order could not be found. Reload tables and try again.')
+            if (!response.ok) throw new Error('We could not shift this table. Please try again.')
+
+            const movedOrder: unknown = await response.json()
+            if (!isOpenOrder(movedOrder)) throw new Error('The shifted order response was invalid.')
+            const movedOpenOrder = toOpenOrderState(movedOrder)
+
+            setOrdersBySeating((current) => {
+                const next = { ...current }
+                delete next[shift.fromId]
+                next[shift.toId] = movedOpenOrder
+                return next
+            })
+            setDraftSeatingIds((current) => current.filter((id) => id !== shift.fromId && id !== shift.toId))
+            setTableLabelDraftsBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, movedOpenOrder.tableLabel ?? ''))
+            setOrderDescriptionDraftsBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, movedOpenOrder.orderDescription ?? ''))
+            setCustomerNameDraftsBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, movedOpenOrder.customerName ?? ''))
+            setCustomerPhoneDraftsBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, movedOpenOrder.customerPhone ?? ''))
+            setCustomerDateOfBirthDraftsBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, movedOpenOrder.customerDateOfBirth ?? ''))
+            setAddNameEnabledBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, Boolean(movedOpenOrder.customerName?.trim())))
+            setAddPhoneEnabledBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, Boolean(movedOpenOrder.customerPhone)))
+            setAddDateOfBirthEnabledBySeating((current) => rekeySeatingDraft(current, shift.fromId, shift.toId, Boolean(movedOpenOrder.customerDateOfBirth)))
+            if (shift.targetKind === 'table') setTableCount((current) => Math.max(current, shift.targetNumber))
+            else setOutdoorCount((current) => Math.max(current, shift.targetNumber))
+            clearInvoice()
+            setUpiQrSeatingId(null)
+            setLastOrderSave(null)
+            setCustomerSearchQuery(movedOpenOrder.customerPhone ?? '')
+            setCustomerSearchMatches([])
+            setCustomerSearchMessage(null)
+            setCustomerSearchStatus('idle')
+            setSelectedSeatingId(shift.toId)
+            setPendingSeatingShift(null)
+            setMessage({ tone: 'success', text: `${shift.fromDisplayName} shifted to ${shift.toDisplayName}.` })
+        } catch (error) {
+            setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'We could not shift this table. Please try again.' })
+            setPendingSeatingShift(null)
+        } finally {
+            setIsShiftingSeating(false)
+        }
+    }
+
+    function addSeating(kind: 'table' | 'outdoor') {
+        const number = (kind === 'table' ? tableCount : outdoorCount) + 1
+        const id = `${kind}-${number}`
+        if (kind === 'table') setTableCount(number)
+        else setOutdoorCount(number)
+        setDraftSeatingIds((current) => [...current, id])
+        selectSeating(id)
+    }
+
+    function closeEmptyTable() {
+        if (selectedSeating === null || selectedOrderLines.length > 0 || ordersBySeating[selectedSeating.id]) return
+        setDraftSeatingIds((current) => current.filter((id) => id !== selectedSeating.id))
+        setSelectedSeatingId(null)
+        setMessage(null)
+        clearInvoice()
     }
 
     function clearInvoice() {
@@ -879,6 +1046,11 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
     }
 
     function applySavedOrder(intent: OrderSaveIntent, savedOpenOrder: OpenOrderState | null) {
+        setDraftSeatingIds((current) => {
+            const otherDrafts = current.filter((id) => id !== intent.seatingId)
+            return savedOpenOrder === null && !intent.seatingId.startsWith('committee-')
+                ? [...otherDrafts, intent.seatingId] : otherDrafts
+        })
         if (intent.seatingId.startsWith('committee-')) {
             setCommitteeDiscountDrafts((current) => ({ ...current, [intent.seatingId]: String(savedOpenOrder?.committeeDiscountPercent ?? 0) }))
         }
@@ -1377,6 +1549,7 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
                 body: JSON.stringify({
                     paymentMethod,
                     tableName: selectedSeating.name,
+                    ...(paymentMethod !== 'CASH' ? { upiQrProvider: selectedUpiAccount === 'Primary' ? 'PRIMARY' : 'SECONDARY' } : {}),
                     ...(paymentMethod === 'SPLIT' ? { cashAmount: (splitCashPaise ?? 0) / 100, onlineAmount: (splitOnlinePaise ?? 0) / 100 } : {}),
                 }),
                 credentials: 'include',
@@ -1439,6 +1612,698 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
         setPendingPaymentMethod(paymentMethod)
     }
 
+    const selectedOrderEditor = selectedSeating !== null ? (
+        <div className="table-order-area" id="selected-order-panel" ref={selectedOrderPanelRef}>
+            <section aria-label={isCommitteeOrder ? undefined : selectedSeatingName} aria-labelledby={isCommitteeOrder ? 'table-order-builder-heading' : undefined} className="table-order-builder">
+                {isCommitteeOrder && <header className="table-order-heading">
+                    <p className="eyebrow">Selected seating</p>
+                    <h2 id="table-order-builder-heading">{selectedSeatingName}</h2>
+                </header>}
+
+                <div className="table-inline-metadata">
+                    {!hasJustPaid && !isCommitteeOrder && <div className="field-group table-name-field">
+                        <label htmlFor="order-table-name">Table name</label>
+                        <input disabled={isOrderActionInProgress} id="order-table-name" maxLength={100} onChange={(event) => {
+                            setTableLabelDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: event.target.value }))
+                            clearInvoice()
+                        }} placeholder={`${selectedSeating.name} (optional name)`} ref={tableNameInputRef} value={tableLabel} />
+                        {draftSeatingIds.includes(selectedSeating.id) && selectedOrderLines.length === 0 && <button disabled={isOrderActionInProgress} onClick={closeEmptyTable} type="button">Close empty table</button>}
+                        {selectedOrderLines.length > 0 && isTableLabelDirty && <button disabled={isOrderActionInProgress} onClick={saveTableLabel} type="button">Save table name</button>}
+                    </div>}
+                    {!hasJustPaid && !isCommitteeOrder && selectedOpenOrder && selectedOrderLines.length > 0 && (
+                        <button
+                            className="table-shift-action"
+                            disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails || hasFailedOrderSave}
+                            onClick={requestSeatingShift}
+                            type="button"
+                        >
+                            Shift to {selectedSeating.kind === 'table' ? 'Outdoor' : 'Indoor'}
+                        </button>
+                    )}
+
+                    {!hasJustPaid && !isCommitteeOrder && (
+                        <details className="table-contact-disclosure">
+                            <summary>Contact details</summary>
+                            <fieldset className="table-order-customer" disabled={isOrderActionInProgress}>
+                                <legend>Customer details</legend>
+                                <form className="customer-mobile-search" noValidate onSubmit={searchCustomerByPhone}>
+                                    <label htmlFor="table-customer-search-phone">Search by name or mobile</label>
+                                    <div>
+                                        <input
+                                            id="table-customer-search-phone"
+                                            onChange={(event) => {
+                                                setCustomerSearchQuery(event.target.value)
+                                                setCustomerSearchMessage(null)
+                                                setCustomerSearchStatus('idle')
+                                                setIsCreateContactOpen(false)
+                                                setCustomerSearchMatches([])
+                                            }}
+                                            placeholder="Name or 10-digit mobile"
+                                            type="search"
+                                            value={customerSearchQuery}
+                                        />
+                                        <button disabled={isSearchingCustomer} type="submit">
+                                            {isSearchingCustomer ? 'Searching...' : 'Search'}
+                                        </button>
+                                    </div>
+                                </form>
+                                {customerSearchMessage && (
+                                    <p className="customer-search-message" role="status">{customerSearchMessage}</p>
+                                )}
+                                {customerSearchStatus === 'multiple' && customerSearchMatches.length > 0 && (
+                                    <div aria-label="Matching customers" className="customer-search-matches">
+                                        {customerSearchMatches.map((customer) => (
+                                            <button
+                                                aria-label={`Use ${formatCustomerName(customer.name)}, ${customer.phoneNumber}`}
+                                                key={customer.phoneNumber}
+                                                onClick={() => selectCustomerProfile(customer)}
+                                                type="button"
+                                            >
+                                                <strong>{formatCustomerName(customer.name)}</strong>
+                                                <span>{customer.phoneNumber}</span>
+                                                {customer.dateOfBirth && <small>{customer.dateOfBirth}</small>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {customerSearchStatus === 'not-found' && !isCreateContactOpen && (
+                                    <button
+                                        className="table-customer-create"
+                                        onClick={() => setIsCreateContactOpen(true)}
+                                        type="button"
+                                    >
+                                        Create new contact
+                                    </button>
+                                )}
+                                {isCreateContactOpen && (
+                                    <form className="table-customer-create-form" onSubmit={createCustomerContact}>
+                                        <div className="field-group table-order-customer-input">
+                                            <label htmlFor="new-contact-name">Name (optional)</label>
+                                            <input
+                                                autoComplete="name"
+                                                id="new-contact-name"
+                                                maxLength={100}
+                                                onChange={(event) => setNewContactName(event.target.value)}
+                                                value={newContactName}
+                                            />
+                                        </div>
+                                        <div className="field-group table-order-customer-input">
+                                            <label htmlFor="new-contact-phone">Phone number (optional)</label>
+                                            <input
+                                                autoComplete="tel"
+                                                id="new-contact-phone"
+                                                inputMode="tel"
+                                                maxLength={32}
+                                                onChange={(event) => setNewContactPhone(event.target.value)}
+                                                type="tel"
+                                                value={newContactPhone}
+                                            />
+                                        </div>
+                                        <div className="field-group table-order-customer-input">
+                                            <label htmlFor="new-contact-date-of-birth">Date of birth (optional)</label>
+                                            <input
+                                                id="new-contact-date-of-birth"
+                                                onChange={(event) => setNewContactDateOfBirth(event.target.value)}
+                                                type="date"
+                                                value={newContactDateOfBirth}
+                                            />
+                                        </div>
+                                        <div className="table-customer-create-actions">
+                                            <button disabled={isSavingNewContact} type="submit">
+                                                {isSavingNewContact ? 'Saving contact...' : 'Save contact'}
+                                            </button>
+                                            <button disabled={isSavingNewContact} onClick={() => setIsCreateContactOpen(false)} type="button">
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </form>
+                                )}
+
+                                {(customerNameForSave || customerPhoneForSave || customerDateOfBirthForSave) && (
+                                    <div aria-label="Selected customer" className="customer-search-message" role="group">
+                                        {customerNameForSave && <p>{customerNameForSave}</p>}
+                                        {customerPhoneForSave && <p>{customerPhoneForSave}</p>}
+                                        {customerDateOfBirthForSave && <p>{customerDateOfBirthForSave}</p>}
+                                        <button
+                                            onClick={() => {
+                                                setSelectedCustomerName('')
+                                                setSelectedCustomerPhone('')
+                                                setSelectedCustomerDateOfBirth('')
+                                                setSelectedCustomerFieldEnabled('name', false)
+                                                setSelectedCustomerFieldEnabled('phone', false)
+                                                setSelectedCustomerFieldEnabled('dateOfBirth', false)
+                                                setCustomerSearchQuery('')
+                                                setCustomerSearchMatches([])
+                                                setCustomerSearchStatus('idle')
+                                                setCustomerSearchMessage(null)
+                                                setIsCreateContactOpen(false)
+                                                clearInvoice()
+                                                setMessage(null)
+                                            }}
+                                            type="button"
+                                        >
+                                            Remove customer
+                                        </button>
+                                    </div>
+                                )}
+                                {selectedOrderLines.length > 0 && isCustomerDetailsDirty && (
+                                    <button
+                                        className="table-customer-save"
+                                        disabled={isOrderActionInProgress || hasInvalidCustomerDetails}
+                                        onClick={saveCustomerDetails}
+                                        type="button"
+                                    >
+                                        Save details
+                                    </button>
+                                )}
+                            </fieldset>
+                        </details>
+                    )}
+
+                    {!hasJustPaid && <details className="table-description-disclosure">
+                        <summary>Order description</summary>
+                        <div className="field-group table-order-description">
+                            <label htmlFor="order-description">Order description (optional)</label>
+                            <textarea
+                                disabled={isOrderActionInProgress}
+                                id="order-description"
+                                maxLength={500}
+                                onChange={(event) => {
+                                    setOrderDescriptionDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: event.target.value }))
+                                    clearInvoice()
+                                }}
+                                placeholder="Add preparation notes or other order details"
+                                rows={3}
+                                value={orderDescription}
+                            />
+                            {selectedOrderLines.length > 0 && isOrderDescriptionDirty && <button
+                                className="table-customer-save"
+                                disabled={isOrderActionInProgress}
+                                onClick={saveOrderDescription}
+                                type="button"
+                            >Save description</button>}
+                        </div>
+                    </details>}
+                </div>
+
+                {isLoading && <p className="table-order-empty">Loading menu...</p>}
+                {!isLoading && menuItems.length === 0 && (
+                    <p className="table-order-empty">No menu items are available yet.</p>
+                )}
+
+                {!isLoading && menuItems.length > 0 && !isOrderCompleted && !hasJustPaid && (
+                    <form className="table-order-form" noValidate onSubmit={(event) => event.preventDefault()}>
+                        <div className="field-group">
+                            <label htmlFor="table-menu-item">Menu item</label>
+                            <div
+                                className="table-menu-picker"
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Escape') {
+                                        event.preventDefault()
+                                        menuPickerRef.current?.querySelector('input')?.focus()
+                                        setIsMenuPickerOpen(false)
+                                        setActiveMenuItemId(null)
+                                        setMenuSearch('')
+                                    }
+                                }}
+                                ref={menuPickerRef}
+                            >
+                                <input
+                                    aria-autocomplete="list"
+                                    aria-controls="table-menu-options"
+                                    aria-expanded={isMenuPickerOpen}
+                                    aria-haspopup="dialog"
+                                    autoComplete="off"
+                                    disabled={isOrderActionInProgress}
+                                    id="table-menu-item"
+                                    onChange={(event) => {
+                                        setMenuSearch(event.target.value)
+                                        setActiveMenuItemId(null)
+                                        setIsMenuPickerOpen(true)
+                                    }}
+                                    onClick={() => setIsMenuPickerOpen(true)}
+                                    onFocus={() => {
+                                        setMenuSearch('')
+                                        setIsMenuPickerOpen(true)
+                                    }}
+                                    onKeyDown={(event) => {
+                                        const options = groupedMenuItems.flatMap((group) => group.items)
+                                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                            event.preventDefault()
+                                            setIsMenuPickerOpen(true)
+                                            if (options.length === 0) return
+                                            const currentIndex = options.findIndex((item) => item.id === activeMenuItemId)
+                                            const nextIndex = currentIndex === -1
+                                                ? event.key === 'ArrowDown' ? 0 : options.length - 1
+                                                : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+                                            const nextItem = options[nextIndex]
+                                            setActiveMenuItemId(nextItem.id)
+                                            menuPickerRef.current?.querySelector<HTMLElement>(`#table-menu-option-${nextItem.id}`)?.scrollIntoView?.({ block: 'nearest' })
+                                            menuPickerRef.current?.querySelector<HTMLInputElement>(`#table-menu-option-${nextItem.id} input[type='checkbox']`)?.focus()
+                                        } else if (event.key === 'Enter') {
+                                            event.preventDefault()
+                                            if (!isMenuPickerOpen) return
+                                            const item = options.find((option) => option.id === activeMenuItemId)
+                                                ?? (options.length === 1 ? options[0] : undefined)
+                                            if (item) toggleMenuItem(item, !selectedOrderLines.some((line) => line.menuItemId === item.id))
+                                        } else if (event.key === 'Escape') {
+                                            event.preventDefault()
+                                            setIsMenuPickerOpen(false)
+                                            setActiveMenuItemId(null)
+                                            setMenuSearch('')
+                                        }
+                                    }}
+                                    placeholder="Select or search a dish"
+                                    role="combobox"
+                                    value={isMenuPickerOpen ? menuSearch : selectedOrderLines.length > 0 ? `${selectedOrderLines.length} selected` : menuSearch}
+                                />
+                                <button
+                                    aria-label="Show menu items"
+                                    className="table-menu-toggle"
+                                    disabled={isOrderActionInProgress}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => {
+                                        const shouldOpen = !isMenuPickerOpen
+                                        menuPickerRef.current?.querySelector('input')?.focus()
+                                        setMenuSearch('')
+                                        setIsMenuPickerOpen(shouldOpen)
+                                    }}
+                                    tabIndex={-1}
+                                    type="button"
+                                ><span aria-hidden="true">&#9662;</span></button>
+                                <div aria-label="Menu items" className="table-menu-options" hidden={!isMenuPickerOpen} id="table-menu-options" role="dialog">
+                                    {groupedMenuItems.map(({ section, subsection, items }) => (
+                                        <div aria-label={subsection ? `${section} / ${subsection}` : section} key={`${section}-${subsection || 'items'}`} role="group">
+                                            <div className="table-menu-option-heading">{subsection ? `${section} / ${subsection}` : section}</div>
+                                            {items.map((menuItem) => {
+                                                const line = selectedOrderLines.find((item) => item.menuItemId === menuItem.id)
+                                                return <div
+                                                    className={activeMenuItemId === menuItem.id ? 'table-menu-check-row table-menu-option-active' : 'table-menu-check-row'}
+                                                    id={`table-menu-option-${menuItem.id}`}
+                                                    key={menuItem.id}
+                                                    onMouseDown={(event) => {
+                                                        if (event.target instanceof Element && !event.target.closest('input, button, select, textarea')) {
+                                                            event.preventDefault()
+                                                        }
+                                                    }}
+                                                    onClick={(event) => {
+                                                        if (event.target instanceof Element && !event.target.closest('label, input, button, fieldset, .table-quantity-control')) {
+                                                            toggleMenuItem(menuItem, line === undefined)
+                                                        }
+                                                    }}
+                                                >
+                                                    <div className="table-menu-check-main">
+                                                        <label>
+                                                            <input
+                                                                aria-label={`Select ${menuItem.name}`}
+                                                                checked={line !== undefined}
+                                                                disabled={isOrderActionInProgress}
+                                                                onChange={(event) => toggleMenuItem(menuItem, event.target.checked)}
+                                                                onKeyDown={(event) => {
+                                                                    if (event.key === 'Enter') {
+                                                                        event.preventDefault()
+                                                                        toggleMenuItem(menuItem, line === undefined)
+                                                                    }
+                                                                }}
+                                                                type="checkbox"
+                                                            />
+                                                            <span>{menuItem.name}<small>{currencyFormatter.format(getUnitPrice(menuItem))}</small></span>
+                                                        </label>
+                                                        {line && <div aria-label={`Quantity for ${menuItem.name}`} className="table-quantity-control" role="group">
+                                                            <button aria-label={`Decrease selected ${menuItem.name} quantity`} className="table-quantity-step" disabled={isOrderActionInProgress || line.quantity <= 1} onClick={() => adjustOrderLineQuantity(line, -1)} type="button">-</button>
+                                                            <output>{line.quantity}</output>
+                                                            <button aria-label={`Increase selected ${menuItem.name} quantity`} className="table-quantity-step" disabled={isOrderActionInProgress || line.quantity >= 10_000} onClick={() => adjustOrderLineQuantity(line, 1)} type="button">+</button>
+                                                        </div>}
+                                                    </div>
+                                                    {line && menuItem.addOns.length > 0 && <div className="table-menu-addons-dropdown">
+                                                        <button
+                                                            aria-expanded={expandedAddOnMenuItemId === menuItem.id}
+                                                            aria-label={`Add-ons for ${menuItem.name}`}
+                                                            className="table-menu-addons-toggle"
+                                                            disabled={isOrderActionInProgress}
+                                                            onClick={() => toggleAddOnDropdown(menuItem)}
+                                                            type="button"
+                                                        >
+                                                            {expandedAddOnMenuItemId === menuItem.id ? 'Hide add-ons' : `Add-ons (${menuItem.addOns.length})`}
+                                                            <span aria-hidden="true">{expandedAddOnMenuItemId === menuItem.id ? '−' : '+'}</span>
+                                                        </button>
+                                                        {expandedAddOnMenuItemId === menuItem.id && <fieldset className="table-menu-inline-addons" disabled={isOrderActionInProgress}>
+                                                            <legend>Add-ons for {menuItem.name}</legend>
+                                                            {menuItem.addOns.map((addOn) => <label key={addOn.id}>
+                                                                <input aria-label={`Add ${addOn.name}`} checked={line.addOns.some((item) => item.id === addOn.id)} onChange={(event) => toggleOrderAddOn(menuItem, line, addOn, event.target.checked)} type="checkbox" />
+                                                                <span>{addOn.name} (+{currencyFormatter.format(addOn.price)})</span>
+                                                            </label>)}
+                                                        </fieldset>}
+                                                    </div>}
+                                                </div>
+                                            })}
+                                        </div>
+                                    ))}
+                                    {matchingMenuItems.length === 0 && <p role="status">No matching menu items.</p>}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="table-order-actions">
+                            {isOrderSaving && <p role="status">Saving order...</p>}
+                            <button
+                                className="table-order-complete"
+                                disabled={isOrderActionInProgress || selectedOrderLines.length === 0 || hasFailedOrderSave}
+                                onClick={() => void completeOrder()}
+                                type="button"
+                            >
+                                Complete order
+                            </button>
+                        </div>
+                    </form>
+                )}
+
+                {isOrderCompleted && (
+                    <section aria-label={`Completed ${selectedSeatingName} order`} className="completed-order-panel">
+                        <p>Final price</p>
+                        <strong>{currencyFormatter.format(selectedOrderTotal)}</strong>
+                        <section aria-label="Payment options" className="table-payment-actions" ref={paymentActionsRef} tabIndex={-1}>
+                            <p>Settle this order</p>
+                            <label className="table-split-toggle">
+                                <input checked={isSplitPayment} disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails} onChange={(event) => {
+                                    setIsSplitPayment(event.target.checked)
+                                    setSplitCashAmount('')
+                                    setSplitOnlineAmount('')
+                                    setUpiQrSeatingId(null)
+                                    setMessage(null)
+                                }} type="checkbox" />
+                                Split payment
+                            </label>
+                            {isSplitPayment && <fieldset className="table-split-fields" disabled={isOrderActionInProgress}>
+                                <legend>Cash + Online</legend>
+                                <label htmlFor="split-cash-amount">Cash amount (INR)
+                                    <input id="split-cash-amount" inputMode="decimal" min="0.01" onChange={(event) => setSplitCashAmount(event.target.value)} step="0.01" type="number" value={splitCashAmount} />
+                                </label>
+                                <label htmlFor="split-online-amount">Online amount (INR)
+                                    <input id="split-online-amount" inputMode="decimal" min="0.01" onChange={(event) => setSplitOnlineAmount(event.target.value)} step="0.01" type="number" value={splitOnlineAmount} />
+                                </label>
+                                {(splitCashAmount !== '' || splitOnlineAmount !== '') && !isValidSplit && <p className="table-split-validation" role="alert">Cash and online amounts must be positive and add up to {currencyFormatter.format(selectedOrderTotal)}.</p>}
+                            </fieldset>}
+                            <div className="table-payment-buttons">
+                                {!isSplitPayment && selectedUpiVpa !== '' && (
+                                    <button
+                                        className="table-payment-upi"
+                                        disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
+                                        onClick={() => {
+                                            const isQrVisible = upiQrSeatingId === selectedSeating.id
+                                            setUpiQrSeatingId(isQrVisible ? null : selectedSeating.id)
+                                        }}
+                                        type="button"
+                                    >
+                                        {upiQrSeatingId === selectedSeating.id ? 'Hide UPI QR' : 'Show UPI QR'}
+                                    </button>
+                                )}
+                                {!isSplitPayment && <button
+                                    className="table-payment-cash"
+                                    disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
+                                    onClick={() => requestPayment('CASH')}
+                                    type="button"
+                                >
+                                    {paymentMethodInProgress === 'CASH' ? 'Recording cash payment...' : 'Paid by cash'}
+                                </button>}
+                                {!isSplitPayment && <button
+                                    className="table-payment-online"
+                                    disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
+                                    onClick={() => requestPayment('ONLINE')}
+                                    type="button"
+                                >
+                                    {paymentMethodInProgress === 'ONLINE' ? 'Recording online payment...' : 'Paid online'}
+                                </button>}
+                                {isSplitPayment && <button className="table-payment-online" disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails || !isValidSplit} onClick={() => requestPayment('SPLIT')} type="button">
+                                    {paymentMethodInProgress === 'SPLIT' ? 'Recording split payment...' : 'Record split payment'}
+                                </button>}
+                            </div>
+                            {selectedUpiVpa.trim() !== '' && (isSplitPayment ? isValidSplit : upiQrSeatingId === selectedSeating.id) && (
+                                <section aria-labelledby="table-upi-qr-heading" className="table-upi-qr">
+                                    <QRCodeSVG
+                                        includeMargin
+                                        size={208}
+                                        title="UPI payment QR"
+                                        value={createUpiPaymentUri(qrPaymentAmount, selectedSeatingName, restaurantName, selectedUpiVpa)}
+                                    />
+                                    <div>
+                                        <p className="eyebrow">UPI payment</p>
+                                        <h3 id="table-upi-qr-heading">Scan to pay {currencyFormatter.format(qrPaymentAmount)}</h3>
+                                        <p>Active account: {selectedUpiAccount}</p>
+                                        <p>Pay to {selectedUpiVpa}</p>
+                                        {!isSplitPayment && <p>After the payer confirms in their UPI app, select “Paid online” to record payment.</p>}
+                                    </div>
+                                </section>
+                            )}
+                        </section>
+                        <div className="completed-order-actions">
+                            <button
+                                className="invoice-create"
+                                disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
+                                onClick={createInvoice}
+                                type="button"
+                            >
+                                Create invoice
+                            </button>
+                            <button className="table-open" disabled={isOrderActionInProgress} onClick={() => void openTable()} type="button">
+                                Open table
+                            </button>
+                        </div>
+
+                        {invoiceUrl && (
+                            <section aria-labelledby="invoice-preview-heading" className="invoice-preview">
+                                <header className="invoice-preview-heading">
+                                    <h3 id="invoice-preview-heading">Invoice preview</h3>
+                                    <div className="invoice-preview-actions">
+                                        <a className="invoice-download" download={getInvoiceFileName(selectedSeatingName)} href={invoiceUrl}>
+                                            Download invoice
+                                        </a>
+                                        {!selectedOpenOrder?.customerPhone && (
+                                            <label className="invoice-whatsapp-number" htmlFor="invoice-whatsapp-number">
+                                                <span>WhatsApp number</span>
+                                                <input
+                                                    autoComplete="tel"
+                                                    id="invoice-whatsapp-number"
+                                                    inputMode="tel"
+                                                    onChange={(event) => setInvoiceWhatsAppPhone(event.target.value)}
+                                                    placeholder="98765 43210"
+                                                    type="tel"
+                                                    value={invoiceWhatsAppPhone}
+                                                />
+                                            </label>
+                                        )}
+                                        <button
+                                            aria-describedby="invoice-whatsapp-help"
+                                            className="invoice-whatsapp-button"
+                                            disabled={!selectedOpenOrder?.customerPhone
+                                                && normalizeCustomerPhoneNumber(invoiceWhatsAppPhone) === null}
+                                            onClick={openInvoiceInWhatsApp}
+                                            type="button"
+                                        >
+                                            Send in WhatsApp
+                                        </button>
+                                    </div>
+                                </header>
+                                <p id="invoice-whatsapp-help" className="invoice-whatsapp-help">
+                                    WhatsApp opens with the invoice details. Attach the downloaded PDF and tap Send.
+                                </p>
+                                <iframe src={invoiceUrl} title="Invoice preview" />
+                            </section>
+                        )}
+                    </section>
+                )}
+
+                {message && (
+                    <p
+                        aria-live="polite"
+                        className={`table-order-message table-order-message-${message.tone}`}
+                        role={message.tone === 'error' ? 'alert' : 'status'}
+                    >
+                        {message.text}
+                    </p>
+                )}
+                {hasRecentOrderSave && (
+                    <p className="table-order-save-status" role="status">
+                        Last saved at {formatTime(lastOrderSave.savedAt.toISOString())}
+                    </p>
+                )}
+                {hasFailedOrderSave && (
+                    <button className="table-order-retry" disabled={isOrderSaving} onClick={retryOrderSave} type="button">
+                        Retry save
+                    </button>
+                )}
+            </section>
+
+            <section aria-labelledby="table-order-summary-heading" className="table-order-summary">
+                <header className="table-order-summary-heading">
+                    <div>
+                        <p className="eyebrow">Current order</p>
+                        <h2 id="table-order-summary-heading">{selectedSeatingName} order</h2>
+                    </div>
+                    <span>{selectedOrderLines.length} {selectedOrderLines.length === 1 ? 'item' : 'items'}</span>
+                </header>
+
+                {selectedOrderLines.length > 0 && (
+                    <p className="table-order-customer-label">
+                        Ordering name: <strong>{formatCustomerName(customerNameForSave)}</strong>
+                    </p>
+                )}
+                {selectedOpenOrder?.orderDescription && <p className="table-order-description-summary">
+                    <strong>Description:</strong> {selectedOpenOrder.orderDescription}
+                </p>}
+
+                {selectedOrderLines.length === 0 ? (
+                    <>
+                        <p className="table-order-empty">No items selected for {selectedSeatingName}.</p>
+                        {hasJustPaid && (
+                            <button className="table-restart" onClick={restartTable} type="button">Close table</button>
+                        )}
+                        {hasJustPaid && lastPaidOrder && (
+                            <section aria-labelledby="paid-receipt-heading" className="paid-receipt-panel">
+                                <header className="paid-receipt-heading">
+                                    <div>
+                                        <p className="eyebrow">Payment complete</p>
+                                        <h3 id="paid-receipt-heading">Receipt {lastPaidOrder.billNumber}</h3>
+                                    </div>
+                                    <strong>{currencyFormatter.format(lastPaidOrder.total)}</strong>
+                                </header>
+                                <p>
+                                    {getPaymentMethodLabel(lastPaidOrder.paymentMethod)} payment recorded {formatDateTime(lastPaidOrder.paidAt)}.
+                                </p>
+                                {lastPaidOrder.paymentMethod === 'SPLIT' && <p>Cash: {currencyFormatter.format(lastPaidOrder.cashAmount ?? 0)} · Online: {currencyFormatter.format(lastPaidOrder.onlineAmount ?? 0)}</p>}
+                                <p className="table-order-customer-label">
+                                    Ordering name: <strong>{formatCustomerName(lastPaidOrder.customerName)}</strong>
+                                </p>
+                                <button className="invoice-create" onClick={createPaidReceipt} type="button">
+                                    {paidReceiptUrl ? 'Refresh paid receipt' : 'Create paid receipt'}
+                                </button>
+
+                                {paidReceiptUrl && (
+                                    <section aria-labelledby="paid-receipt-preview-heading" className="invoice-preview paid-receipt-preview">
+                                        <header className="invoice-preview-heading">
+                                            <h3 id="paid-receipt-preview-heading">Paid receipt preview</h3>
+                                            <div className="paid-receipt-actions">
+                                                <a className="invoice-download" download={getReceiptFileName(lastPaidOrder.billNumber)} href={paidReceiptUrl}>
+                                                    Download receipt
+                                                </a>
+                                                <button className="invoice-print" disabled={!isPaidReceiptReadyToPrint} onClick={printPaidReceipt} type="button">
+                                                    Print receipt
+                                                </button>
+                                            </div>
+                                        </header>
+                                        <iframe
+                                            onLoad={() => setIsPaidReceiptReadyToPrint(true)}
+                                            ref={paidReceiptFrameRef}
+                                            src={paidReceiptUrl}
+                                            title="Paid receipt preview"
+                                        />
+                                    </section>
+                                )}
+                            </section>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <div className="table-order-table-wrap">
+                            <table aria-label={`Order for ${selectedSeatingName}`} className="table-order-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Item</th>
+                                        <th scope="col">Quantity</th>
+                                        <th scope="col">Unit price</th>
+                                        <th scope="col">Price</th>
+                                        <th scope="col">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {orderLineGroups.map((group) => (
+                                        <Fragment key={group.section}>
+                                            {!isCommitteeOrder && <tr className="table-order-section-row">
+                                                <th colSpan={5} scope="rowgroup">
+                                                    {group.section}{group.section === 'Others' ? ' (no bill discount)' : ''}
+                                                </th>
+                                            </tr>}
+                                            {group.lines.map((orderLine) => (
+                                                <tr key={getOrderLineKey(orderLine)}>
+                                                    <td>{getOrderLineDisplayName(orderLine)}</td>
+                                                    <td>
+                                                        <div
+                                                            aria-label={`Quantity for ${getOrderLineDisplayName(orderLine)}`}
+                                                            className="table-quantity-control"
+                                                            role="group"
+                                                        >
+                                                            <button
+                                                                aria-label={`Decrease ${getOrderLineDisplayName(orderLine)} quantity`}
+                                                                className="table-quantity-step"
+                                                                disabled={isOrderActionInProgress || orderLine.quantity <= 1}
+                                                                onClick={() => adjustOrderLineQuantity(orderLine, -1)}
+                                                                type="button"
+                                                            >
+                                                                -
+                                                            </button>
+                                                            <output>{orderLine.quantity}</output>
+                                                            <button
+                                                                aria-label={`Increase ${getOrderLineDisplayName(orderLine)} quantity`}
+                                                                className="table-quantity-step"
+                                                                disabled={isOrderActionInProgress}
+                                                                onClick={() => adjustOrderLineQuantity(orderLine, 1)}
+                                                                type="button"
+                                                            >
+                                                                +
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                    <td>{currencyFormatter.format(orderLine.unitPrice)}</td>
+                                                    <td>{currencyFormatter.format(getLineTotal(orderLine))}</td>
+                                                    <td>
+                                                        <button
+                                                            aria-label={`Remove ${getOrderLineDisplayName(orderLine)} from ${selectedSeatingName}`}
+                                                            className="table-order-remove"
+                                                            disabled={isOrderActionInProgress}
+                                                            onClick={() => removeOrderLine(orderLine)}
+                                                            type="button"
+                                                        >
+                                                            Remove
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {!isCommitteeOrder && <tr className="table-order-section-subtotal-row">
+                                                <th colSpan={3} scope="row">
+                                                    {group.section === 'General' ? 'General total' : 'Others total'}
+                                                </th>
+                                                <td>{currencyFormatter.format(group.section === 'General' ? generalSubtotal : othersSubtotal)}</td>
+                                                <td></td>
+                                            </tr>}
+                                        </Fragment>
+                                    ))}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <th colSpan={3} scope="row">{isCommitteeOrder ? 'Total price' : 'Combined subtotal'}</th>
+                                        <td>{currencyFormatter.format(selectedOrderSubtotal)}</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <th colSpan={3} scope="row">{isCommitteeOrder ? 'Discount' : `Bill discount (${selectedDiscountPercent.toFixed(2)}% of General)`}</th>
+                                        <td>-{currencyFormatter.format(selectedDiscountAmount)}</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <th colSpan={3} scope="row">{isCommitteeOrder ? 'Final price' : 'Final bill'}</th>
+                                        <td>{currencyFormatter.format(selectedOrderTotal)}</td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+
+                    </>
+                )}
+            </section>
+        </div>
+    ) : null
+
     return (
         <div className="table-workspace">
             <header className="table-page-heading">
@@ -1449,107 +2314,126 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
                 <p>Start an order from the dishes already saved in the menu.</p>
             </header>
 
+            {selectedSeating === null && message && <p className={`table-order-message table-order-message-${message.tone}`} role={message.tone === 'error' ? 'alert' : 'status'}>{message.text}</p>}
             <section
                 aria-label="Restaurant seating"
                 className={`table-seating-layout table-seating-layout-${selectedSeating?.kind ?? 'none'}`}
             >
-                <section aria-labelledby="table-seating-heading" className="seating-zone seating-zone-table">
-                    <header className="seating-zone-heading">
-                        <div>
-                            <p className="eyebrow">Indoor</p>
-                            <h2 id="table-seating-heading">Table</h2>
+                <div className="seating-overview">
+                    <section aria-labelledby="table-seating-heading" className="seating-zone seating-zone-table">
+                        <header className="seating-zone-heading">
+                            <div>
+                                <p className="eyebrow">Indoor</p>
+                                <h2 id="table-seating-heading">Table</h2>
+                            </div>
+                            <button
+                                aria-label="Add table"
+                                className="table-selector table-add-selector"
+                                disabled={isOrderActionInProgress || isLoading || !hasRestoredOrders}
+                                onClick={() => addSeating('table')}
+                                title="Add table"
+                                type="button"
+                            >
+                                <span aria-hidden="true">+</span>
+                            </button>
+                        </header>
+
+                        <div className="table-grid">
+                            {tableSpots.filter((spot) => ordersBySeating[spot.id] || draftSeatingIds.includes(spot.id)).map((tableSpot) => {
+                                const order = ordersBySeating[tableSpot.id]
+                                const seatingStatus = getSeatingStatus(order)
+                                const displayName = getTableDisplayName({ tableName: tableSpot.name, tableLabel: tableLabelDraftsBySeating[tableSpot.id] ?? ordersBySeating[tableSpot.id]?.tableLabel })
+
+                                const isExpanded = selectedSeating?.id === tableSpot.id && !hasJustPaid
+                                return (
+                                    <article className={`seating-card${isExpanded ? ' seating-card-expanded' : ''}`} data-seating-id={tableSpot.id} key={tableSpot.id}>
+                                        <button
+                                            aria-describedby={`seat-status-${tableSpot.id}${order && !isExpanded ? ` seat-order-${tableSpot.id}` : ''}`}
+                                            aria-label={displayName}
+                                            aria-controls={selectedSeating?.id === tableSpot.id ? 'selected-order-panel' : undefined}
+                                            aria-expanded={selectedSeating?.id === tableSpot.id}
+                                            aria-pressed={selectedSeating?.id === tableSpot.id}
+                                            className={`table-selector table-selector-${seatingStatus.tone}${order ? ' seating-selector-has-order' : ''}`}
+                                            disabled={isOrderActionInProgress}
+                                            key={tableSpot.id}
+                                            onClick={() => selectSeating(tableSpot.id)}
+                                            title={`${displayName}: ${seatingStatus.label}: ${seatingStatus.detail}`}
+                                            type="button"
+                                        >
+                                            <span aria-hidden="true" className="seating-selector-topline">
+                                                <span className="seating-selector-name">{displayName}</span>
+                                                <span className="seating-selector-status">{seatingStatus.label}</span>
+                                            </span>
+                                            {!order && <span aria-hidden="true" className="seating-selector-detail">{seatingStatus.detail}</span>}
+                                            {!isExpanded && <SeatingOrderPreview order={order} id={`seat-order-${tableSpot.id}`} />}
+                                            <span className="screen-reader-only" id={`seat-status-${tableSpot.id}`}>
+                                                {seatingStatus.label}. {seatingStatus.detail}
+                                            </span>
+                                        </button>
+                                        {isExpanded && selectedOrderEditor}
+                                    </article>
+                                )
+                            })}
                         </div>
-                        <button
-                            aria-label="Add table"
-                            className="table-selector table-add-selector"
-                            disabled={isOrderActionInProgress}
-                            onClick={() => setTableCount((currentCount) => currentCount + 1)}
-                            title="Add table"
-                            type="button"
-                        >
-                            <span aria-hidden="true">+</span>
-                        </button>
-                    </header>
+                    </section>
 
-                    <div className="table-grid">
-                        {tableSpots.map((tableSpot) => {
-                            const seatingStatus = getSeatingStatus(ordersBySeating[tableSpot.id])
-                            const displayName = getTableDisplayName({ tableName: tableSpot.name, tableLabel: tableLabelDraftsBySeating[tableSpot.id] ?? ordersBySeating[tableSpot.id]?.tableLabel })
+                    <section aria-labelledby="outdoor-seating-heading" className="seating-zone seating-zone-outdoor">
+                        <header className="seating-zone-heading">
+                            <div>
+                                <p className="eyebrow">Open air</p>
+                                <h2 id="outdoor-seating-heading">Outdoor</h2>
+                            </div>
+                            <button
+                                aria-label="Add outdoor table"
+                                className="outdoor-selector table-add-selector"
+                                disabled={isOrderActionInProgress || isLoading || !hasRestoredOrders}
+                                onClick={() => addSeating('outdoor')}
+                                title="Add outdoor table"
+                                type="button"
+                            >
+                                <span aria-hidden="true">+</span>
+                            </button>
+                        </header>
 
-                            return (
-                                <button
-                                    aria-describedby={`seat-status-${tableSpot.id}`}
-                                    aria-label={displayName}
-                                    aria-pressed={selectedSeating?.id === tableSpot.id}
-                                    className={`table-selector table-selector-${seatingStatus.tone}`}
-                                    disabled={isOrderActionInProgress}
-                                    key={tableSpot.id}
-                                    onClick={() => selectSeating(tableSpot.id)}
-                                    title={`${displayName}: ${seatingStatus.label}: ${seatingStatus.detail}`}
-                                    type="button"
-                                >
-                                    <span aria-hidden="true" className="seating-selector-name">{displayName}</span>
-                                    <span aria-hidden="true" className="seating-selector-meta">
-                                        <span className="seating-selector-status">{seatingStatus.label}</span>
-                                        <span className="seating-selector-detail">{seatingStatus.detail}</span>
-                                    </span>
-                                    <span className="screen-reader-only" id={`seat-status-${tableSpot.id}`}>
-                                        {seatingStatus.label}. {seatingStatus.detail}
-                                    </span>
-                                </button>
-                            )
-                        })}
-                    </div>
-                </section>
+                        <div className="outdoor-grid">
+                            {outdoorSpots.filter((spot) => ordersBySeating[spot.id] || draftSeatingIds.includes(spot.id)).map((outdoorSpot) => {
+                                const order = ordersBySeating[outdoorSpot.id]
+                                const seatingStatus = getSeatingStatus(order)
+                                const displayName = getTableDisplayName({ tableName: outdoorSpot.name, tableLabel: tableLabelDraftsBySeating[outdoorSpot.id] ?? ordersBySeating[outdoorSpot.id]?.tableLabel })
 
-                <section aria-labelledby="outdoor-seating-heading" className="seating-zone seating-zone-outdoor">
-                    <header className="seating-zone-heading">
-                        <div>
-                            <p className="eyebrow">Open air</p>
-                            <h2 id="outdoor-seating-heading">Outdoor</h2>
+                                const isExpanded = selectedSeating?.id === outdoorSpot.id && !hasJustPaid
+                                return (
+                                    <article className={`seating-card${isExpanded ? ' seating-card-expanded' : ''}`} data-seating-id={outdoorSpot.id} key={outdoorSpot.id}>
+                                        <button
+                                            aria-describedby={`seat-status-${outdoorSpot.id}${order && !isExpanded ? ` seat-order-${outdoorSpot.id}` : ''}`}
+                                            aria-label={displayName}
+                                            aria-controls={selectedSeating?.id === outdoorSpot.id ? 'selected-order-panel' : undefined}
+                                            aria-expanded={selectedSeating?.id === outdoorSpot.id}
+                                            aria-pressed={selectedSeating?.id === outdoorSpot.id}
+                                            className={`outdoor-selector outdoor-selector-${seatingStatus.tone}${order ? ' seating-selector-has-order' : ''}`}
+                                            disabled={isOrderActionInProgress}
+                                            key={outdoorSpot.id}
+                                            onClick={() => selectSeating(outdoorSpot.id)}
+                                            title={`${displayName}: ${seatingStatus.label}: ${seatingStatus.detail}`}
+                                            type="button"
+                                        >
+                                            <span aria-hidden="true" className="seating-selector-topline">
+                                                <span className="seating-selector-name">{displayName}</span>
+                                                <span className="seating-selector-status">{seatingStatus.label}</span>
+                                            </span>
+                                            {!order && <span aria-hidden="true" className="seating-selector-detail">{seatingStatus.detail}</span>}
+                                            {!isExpanded && <SeatingOrderPreview order={order} id={`seat-order-${outdoorSpot.id}`} />}
+                                            <span className="screen-reader-only" id={`seat-status-${outdoorSpot.id}`}>
+                                                {seatingStatus.label}. {seatingStatus.detail}
+                                            </span>
+                                        </button>
+                                        {isExpanded && selectedOrderEditor}
+                                    </article>
+                                )
+                            })}
                         </div>
-                        <button
-                            aria-label="Add outdoor table"
-                            className="outdoor-selector table-add-selector"
-                            disabled={isOrderActionInProgress}
-                            onClick={() => setOutdoorCount((currentCount) => currentCount + 1)}
-                            title="Add outdoor table"
-                            type="button"
-                        >
-                            <span aria-hidden="true">+</span>
-                        </button>
-                    </header>
-
-                    <div className="outdoor-grid">
-                        {outdoorSpots.map((outdoorSpot) => {
-                            const seatingStatus = getSeatingStatus(ordersBySeating[outdoorSpot.id])
-                            const displayName = getTableDisplayName({ tableName: outdoorSpot.name, tableLabel: tableLabelDraftsBySeating[outdoorSpot.id] ?? ordersBySeating[outdoorSpot.id]?.tableLabel })
-
-                            return (
-                                <button
-                                    aria-describedby={`seat-status-${outdoorSpot.id}`}
-                                    aria-label={displayName}
-                                    aria-pressed={selectedSeating?.id === outdoorSpot.id}
-                                    className={`outdoor-selector outdoor-selector-${seatingStatus.tone}`}
-                                    disabled={isOrderActionInProgress}
-                                    key={outdoorSpot.id}
-                                    onClick={() => selectSeating(outdoorSpot.id)}
-                                    title={`${displayName}: ${seatingStatus.label}: ${seatingStatus.detail}`}
-                                    type="button"
-                                >
-                                    {displayName === outdoorSpot.name ? <>
-                                        <span aria-hidden="true" className="seating-selector-name">Outdoor</span>
-                                        <strong aria-hidden="true">{outdoorSpot.name.replace('Outdoor ', '')}</strong>
-                                    </> : <span aria-hidden="true" className="seating-selector-name">{displayName}</span>}
-                                    <span aria-hidden="true" className="seating-selector-status">{seatingStatus.label}</span>
-                                    <span className="screen-reader-only" id={`seat-status-${outdoorSpot.id}`}>
-                                        {seatingStatus.label}. {seatingStatus.detail}
-                                    </span>
-                                </button>
-                            )
-                        })}
-                    </div>
-                </section>
+                    </section>
+                </div>
                 <section aria-labelledby="committee-seating-heading" className="seating-zone seating-zone-committee">
                     <header className="seating-zone-heading"><div><p className="eyebrow">Members</p><h2 id="committee-seating-heading">Committee</h2></div></header>
                     <div className="committee-table-wrap">
@@ -1609,702 +2493,7 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
                     </form>}
                     {committeeMessage && <p className={`menu-message menu-message-${committeeMessage.tone}`} role={committeeMessage.tone === 'error' ? 'alert' : 'status'}>{committeeMessage.text}</p>}
                 </section>
-                {selectedSeating !== null && (
-                    <div className="table-order-area" id="selected-order-panel" ref={selectedOrderPanelRef}>
-                        <section aria-labelledby="table-order-builder-heading" className="table-order-builder">
-                            <header className="table-order-heading">
-                                <p className="eyebrow">Selected seating</p>
-                                <h2 id="table-order-builder-heading">{selectedSeatingName}</h2>
-                            </header>
-
-                            {!hasJustPaid && !isCommitteeOrder && <div className="field-group table-name-field">
-                                <label htmlFor="order-table-name">Table name</label>
-                                <input disabled={isOrderActionInProgress} id="order-table-name" maxLength={100} onChange={(event) => {
-                                    setTableLabelDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: event.target.value }))
-                                    clearInvoice()
-                                }} placeholder={selectedSeating.name} value={tableLabel} />
-                                {selectedOrderLines.length > 0 && isTableLabelDirty && <button disabled={isOrderActionInProgress} onClick={saveTableLabel} type="button">Save table name</button>}
-                            </div>}
-
-                            {!hasJustPaid && !isCommitteeOrder && (
-                                <fieldset className="table-order-customer" disabled={isOrderActionInProgress}>
-                                    <legend>Customer details</legend>
-                                    <form className="customer-mobile-search" noValidate onSubmit={searchCustomerByPhone}>
-                                        <label htmlFor="table-customer-search-phone">Search by name or mobile</label>
-                                        <div>
-                                            <input
-                                                id="table-customer-search-phone"
-                                                onChange={(event) => {
-                                                    setCustomerSearchQuery(event.target.value)
-                                                    setCustomerSearchMessage(null)
-                                                    setCustomerSearchStatus('idle')
-                                                    setIsCreateContactOpen(false)
-                                                    setCustomerSearchMatches([])
-                                                }}
-                                                placeholder="Name or 10-digit mobile"
-                                                type="search"
-                                                value={customerSearchQuery}
-                                            />
-                                            <button disabled={isSearchingCustomer} type="submit">
-                                                {isSearchingCustomer ? 'Searching...' : 'Search'}
-                                            </button>
-                                        </div>
-                                    </form>
-                                    {customerSearchMessage && (
-                                        <p className="customer-search-message" role="status">{customerSearchMessage}</p>
-                                    )}
-                                    {customerSearchStatus === 'multiple' && customerSearchMatches.length > 0 && (
-                                        <div aria-label="Matching customers" className="customer-search-matches">
-                                            {customerSearchMatches.map((customer) => (
-                                                <button
-                                                    aria-label={`Use ${formatCustomerName(customer.name)}, ${customer.phoneNumber}`}
-                                                    key={customer.phoneNumber}
-                                                    onClick={() => selectCustomerProfile(customer)}
-                                                    type="button"
-                                                >
-                                                    <strong>{formatCustomerName(customer.name)}</strong>
-                                                    <span>{customer.phoneNumber}</span>
-                                                    {customer.dateOfBirth && <small>{customer.dateOfBirth}</small>}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {customerSearchStatus === 'not-found' && !isCreateContactOpen && (
-                                        <button
-                                            className="table-customer-create"
-                                            onClick={() => setIsCreateContactOpen(true)}
-                                            type="button"
-                                        >
-                                            Create new contact
-                                        </button>
-                                    )}
-                                    {isCreateContactOpen && (
-                                        <form className="table-customer-create-form" onSubmit={createCustomerContact}>
-                                            <div className="field-group table-order-customer-input">
-                                                <label htmlFor="new-contact-name">Name (optional)</label>
-                                                <input
-                                                    autoComplete="name"
-                                                    id="new-contact-name"
-                                                    maxLength={100}
-                                                    onChange={(event) => setNewContactName(event.target.value)}
-                                                    value={newContactName}
-                                                />
-                                            </div>
-                                            <div className="field-group table-order-customer-input">
-                                                <label htmlFor="new-contact-phone">Phone number (optional)</label>
-                                                <input
-                                                    autoComplete="tel"
-                                                    id="new-contact-phone"
-                                                    inputMode="tel"
-                                                    maxLength={32}
-                                                    onChange={(event) => setNewContactPhone(event.target.value)}
-                                                    type="tel"
-                                                    value={newContactPhone}
-                                                />
-                                            </div>
-                                            <div className="field-group table-order-customer-input">
-                                                <label htmlFor="new-contact-date-of-birth">Date of birth (optional)</label>
-                                                <input
-                                                    id="new-contact-date-of-birth"
-                                                    onChange={(event) => setNewContactDateOfBirth(event.target.value)}
-                                                    type="date"
-                                                    value={newContactDateOfBirth}
-                                                />
-                                            </div>
-                                            <div className="table-customer-create-actions">
-                                                <button disabled={isSavingNewContact} type="submit">
-                                                    {isSavingNewContact ? 'Saving contact...' : 'Save contact'}
-                                                </button>
-                                                <button disabled={isSavingNewContact} onClick={() => setIsCreateContactOpen(false)} type="button">
-                                                    Cancel
-                                                </button>
-                                            </div>
-                                        </form>
-                                    )}
-
-                                    {(customerNameForSave || customerPhoneForSave || customerDateOfBirthForSave) && (
-                                        <div aria-label="Selected customer" className="customer-search-message" role="group">
-                                            {customerNameForSave && <p>{customerNameForSave}</p>}
-                                            {customerPhoneForSave && <p>{customerPhoneForSave}</p>}
-                                            {customerDateOfBirthForSave && <p>{customerDateOfBirthForSave}</p>}
-                                            <button
-                                                onClick={() => {
-                                                    setSelectedCustomerName('')
-                                                    setSelectedCustomerPhone('')
-                                                    setSelectedCustomerDateOfBirth('')
-                                                    setSelectedCustomerFieldEnabled('name', false)
-                                                    setSelectedCustomerFieldEnabled('phone', false)
-                                                    setSelectedCustomerFieldEnabled('dateOfBirth', false)
-                                                    setCustomerSearchQuery('')
-                                                    setCustomerSearchMatches([])
-                                                    setCustomerSearchStatus('idle')
-                                                    setCustomerSearchMessage(null)
-                                                    setIsCreateContactOpen(false)
-                                                    clearInvoice()
-                                                    setMessage(null)
-                                                }}
-                                                type="button"
-                                            >
-                                                Remove customer
-                                            </button>
-                                        </div>
-                                    )}
-                                    {selectedOrderLines.length > 0 && isCustomerDetailsDirty && (
-                                        <button
-                                            className="table-customer-save"
-                                            disabled={isOrderActionInProgress || hasInvalidCustomerDetails}
-                                            onClick={saveCustomerDetails}
-                                            type="button"
-                                        >
-                                            Save details
-                                        </button>
-                                    )}
-                                </fieldset>
-                            )}
-
-                            {!hasJustPaid && <div className="field-group table-order-description">
-                                <label htmlFor="order-description">Order description (optional)</label>
-                                <textarea
-                                    disabled={isOrderActionInProgress}
-                                    id="order-description"
-                                    maxLength={500}
-                                    onChange={(event) => {
-                                        setOrderDescriptionDraftsBySeating((current) => ({ ...current, [selectedSeating.id]: event.target.value }))
-                                        clearInvoice()
-                                    }}
-                                    placeholder="Add preparation notes or other order details"
-                                    rows={3}
-                                    value={orderDescription}
-                                />
-                                {selectedOrderLines.length > 0 && isOrderDescriptionDirty && <button
-                                    className="table-customer-save"
-                                    disabled={isOrderActionInProgress}
-                                    onClick={saveOrderDescription}
-                                    type="button"
-                                >Save description</button>}
-                            </div>}
-
-                            {isLoading && <p className="table-order-empty">Loading menu...</p>}
-                            {!isLoading && menuItems.length === 0 && (
-                                <p className="table-order-empty">No menu items are available yet.</p>
-                            )}
-
-                            {!isLoading && menuItems.length > 0 && !isOrderCompleted && !hasJustPaid && (
-                                <form className="table-order-form" noValidate onSubmit={(event) => event.preventDefault()}>
-                                    <div className="field-group">
-                                        <label htmlFor="table-menu-item">Menu item</label>
-                                        <div
-                                            className="table-menu-picker"
-                                            onKeyDown={(event) => {
-                                                if (event.key === 'Escape') {
-                                                    event.preventDefault()
-                                                    menuPickerRef.current?.querySelector('input')?.focus()
-                                                    setIsMenuPickerOpen(false)
-                                                    setActiveMenuItemId(null)
-                                                    setMenuSearch('')
-                                                }
-                                            }}
-                                            ref={menuPickerRef}
-                                        >
-                                            <input
-                                                aria-autocomplete="list"
-                                                aria-controls="table-menu-options"
-                                                aria-expanded={isMenuPickerOpen}
-                                                aria-haspopup="dialog"
-                                                autoComplete="off"
-                                                disabled={isOrderActionInProgress}
-                                                id="table-menu-item"
-                                                onChange={(event) => {
-                                                    setMenuSearch(event.target.value)
-                                                    setActiveMenuItemId(null)
-                                                    setIsMenuPickerOpen(true)
-                                                }}
-                                                onClick={() => setIsMenuPickerOpen(true)}
-                                                onFocus={() => {
-                                                    setMenuSearch('')
-                                                    setIsMenuPickerOpen(true)
-                                                }}
-                                                onKeyDown={(event) => {
-                                                    const options = groupedMenuItems.flatMap((group) => group.items)
-                                                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                                                        event.preventDefault()
-                                                        setIsMenuPickerOpen(true)
-                                                        if (options.length === 0) return
-                                                        const currentIndex = options.findIndex((item) => item.id === activeMenuItemId)
-                                                        const nextIndex = currentIndex === -1
-                                                            ? event.key === 'ArrowDown' ? 0 : options.length - 1
-                                                            : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
-                                                        const nextItem = options[nextIndex]
-                                                        setActiveMenuItemId(nextItem.id)
-                                                        menuPickerRef.current?.querySelector<HTMLElement>(`#table-menu-option-${nextItem.id}`)?.scrollIntoView?.({ block: 'nearest' })
-                                                        menuPickerRef.current?.querySelector<HTMLInputElement>(`#table-menu-option-${nextItem.id} input[type='checkbox']`)?.focus()
-                                                    } else if (event.key === 'Enter') {
-                                                        event.preventDefault()
-                                                        if (!isMenuPickerOpen) return
-                                                        const item = options.find((option) => option.id === activeMenuItemId)
-                                                            ?? (options.length === 1 ? options[0] : undefined)
-                                                        if (item) toggleMenuItem(item, !selectedOrderLines.some((line) => line.menuItemId === item.id))
-                                                    } else if (event.key === 'Escape') {
-                                                        event.preventDefault()
-                                                        setIsMenuPickerOpen(false)
-                                                        setActiveMenuItemId(null)
-                                                        setMenuSearch('')
-                                                    }
-                                                }}
-                                                placeholder="Select or search a dish"
-                                                role="combobox"
-                                                value={isMenuPickerOpen ? menuSearch : selectedOrderLines.length > 0 ? `${selectedOrderLines.length} selected` : menuSearch}
-                                            />
-                                            <button
-                                                aria-label="Show menu items"
-                                                className="table-menu-toggle"
-                                                disabled={isOrderActionInProgress}
-                                                onMouseDown={(event) => event.preventDefault()}
-                                                onClick={() => {
-                                                    const shouldOpen = !isMenuPickerOpen
-                                                    menuPickerRef.current?.querySelector('input')?.focus()
-                                                    setMenuSearch('')
-                                                    setIsMenuPickerOpen(shouldOpen)
-                                                }}
-                                                tabIndex={-1}
-                                                type="button"
-                                            ><span aria-hidden="true">&#9662;</span></button>
-                                            <div aria-label="Menu items" className="table-menu-options" hidden={!isMenuPickerOpen} id="table-menu-options" role="dialog">
-                                                {groupedMenuItems.map(({ section, subsection, items }) => (
-                                                    <div aria-label={subsection ? `${section} / ${subsection}` : section} key={`${section}-${subsection || 'items'}`} role="group">
-                                                        <div className="table-menu-option-heading">{subsection ? `${section} / ${subsection}` : section}</div>
-                                                        {items.map((menuItem) => {
-                                                            const line = selectedOrderLines.find((item) => item.menuItemId === menuItem.id)
-                                                            return <div
-                                                                className={activeMenuItemId === menuItem.id ? 'table-menu-check-row table-menu-option-active' : 'table-menu-check-row'}
-                                                                id={`table-menu-option-${menuItem.id}`}
-                                                                key={menuItem.id}
-                                                                onMouseDown={(event) => {
-                                                                    if (event.target instanceof Element && !event.target.closest('input, button, select, textarea')) {
-                                                                        event.preventDefault()
-                                                                    }
-                                                                }}
-                                                                onClick={(event) => {
-                                                                    if (event.target instanceof Element && !event.target.closest('label, input, button, fieldset, .table-quantity-control')) {
-                                                                        toggleMenuItem(menuItem, line === undefined)
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <div className="table-menu-check-main">
-                                                                    <label>
-                                                                        <input
-                                                                            aria-label={`Select ${menuItem.name}`}
-                                                                            checked={line !== undefined}
-                                                                            disabled={isOrderActionInProgress}
-                                                                            onChange={(event) => toggleMenuItem(menuItem, event.target.checked)}
-                                                                            onKeyDown={(event) => {
-                                                                                if (event.key === 'Enter') {
-                                                                                    event.preventDefault()
-                                                                                    toggleMenuItem(menuItem, line === undefined)
-                                                                                }
-                                                                            }}
-                                                                            type="checkbox"
-                                                                        />
-                                                                        <span>{menuItem.name}<small>{currencyFormatter.format(getUnitPrice(menuItem))}</small></span>
-                                                                    </label>
-                                                                    {line && <div aria-label={`Quantity for ${menuItem.name}`} className="table-quantity-control" role="group">
-                                                                        <button aria-label={`Decrease selected ${menuItem.name} quantity`} className="table-quantity-step" disabled={isOrderActionInProgress || line.quantity <= 1} onClick={() => adjustOrderLineQuantity(line, -1)} type="button">-</button>
-                                                                        <output>{line.quantity}</output>
-                                                                        <button aria-label={`Increase selected ${menuItem.name} quantity`} className="table-quantity-step" disabled={isOrderActionInProgress || line.quantity >= 10_000} onClick={() => adjustOrderLineQuantity(line, 1)} type="button">+</button>
-                                                                    </div>}
-                                                                </div>
-                                                                {line && menuItem.addOns.length > 0 && <div className="table-menu-addons-dropdown">
-                                                                    <button
-                                                                        aria-expanded={expandedAddOnMenuItemId === menuItem.id}
-                                                                        aria-label={`Add-ons for ${menuItem.name}`}
-                                                                        className="table-menu-addons-toggle"
-                                                                        disabled={isOrderActionInProgress}
-                                                                        onClick={() => toggleAddOnDropdown(menuItem)}
-                                                                        type="button"
-                                                                    >
-                                                                        {expandedAddOnMenuItemId === menuItem.id ? 'Hide add-ons' : `Add-ons (${menuItem.addOns.length})`}
-                                                                        <span aria-hidden="true">{expandedAddOnMenuItemId === menuItem.id ? '−' : '+'}</span>
-                                                                    </button>
-                                                                    {expandedAddOnMenuItemId === menuItem.id && <fieldset className="table-menu-inline-addons" disabled={isOrderActionInProgress}>
-                                                                        <legend>Add-ons for {menuItem.name}</legend>
-                                                                        {menuItem.addOns.map((addOn) => <label key={addOn.id}>
-                                                                            <input aria-label={`Add ${addOn.name}`} checked={line.addOns.some((item) => item.id === addOn.id)} onChange={(event) => toggleOrderAddOn(menuItem, line, addOn, event.target.checked)} type="checkbox" />
-                                                                            <span>{addOn.name} (+{currencyFormatter.format(addOn.price)})</span>
-                                                                        </label>)}
-                                                                    </fieldset>}
-                                                                </div>}
-                                                            </div>
-                                                        })}
-                                                    </div>
-                                                ))}
-                                                {matchingMenuItems.length === 0 && <p role="status">No matching menu items.</p>}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="table-order-actions">
-                                        {isOrderSaving && <p role="status">Saving order...</p>}
-                                        <button
-                                            className="table-order-complete"
-                                            disabled={isOrderActionInProgress || selectedOrderLines.length === 0 || hasFailedOrderSave}
-                                            onClick={() => void completeOrder()}
-                                            type="button"
-                                        >
-                                            Complete order
-                                        </button>
-                                    </div>
-                                </form>
-                            )}
-
-                            {isOrderCompleted && (
-                                <section aria-label={`Completed ${selectedSeatingName} order`} className="completed-order-panel">
-                                    <p>Final price</p>
-                                    <strong>{currencyFormatter.format(selectedOrderTotal)}</strong>
-                                    <div className="completed-order-actions">
-                                        <button
-                                            className="invoice-create"
-                                            disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
-                                            onClick={createInvoice}
-                                            type="button"
-                                        >
-                                            Create invoice
-                                        </button>
-                                        <button className="table-open" disabled={isOrderActionInProgress} onClick={() => void openTable()} type="button">
-                                            Open table
-                                        </button>
-                                    </div>
-
-                                    {invoiceUrl && (
-                                        <section aria-labelledby="invoice-preview-heading" className="invoice-preview">
-                                            <header className="invoice-preview-heading">
-                                                <h3 id="invoice-preview-heading">Invoice preview</h3>
-                                                <div className="invoice-preview-actions">
-                                                    <a className="invoice-download" download={getInvoiceFileName(selectedSeatingName)} href={invoiceUrl}>
-                                                        Download invoice
-                                                    </a>
-                                                    {!selectedOpenOrder?.customerPhone && (
-                                                        <label className="invoice-whatsapp-number" htmlFor="invoice-whatsapp-number">
-                                                            <span>WhatsApp number</span>
-                                                            <input
-                                                                autoComplete="tel"
-                                                                id="invoice-whatsapp-number"
-                                                                inputMode="tel"
-                                                                onChange={(event) => setInvoiceWhatsAppPhone(event.target.value)}
-                                                                placeholder="98765 43210"
-                                                                type="tel"
-                                                                value={invoiceWhatsAppPhone}
-                                                            />
-                                                        </label>
-                                                    )}
-                                                    <button
-                                                        aria-describedby="invoice-whatsapp-help"
-                                                        className="invoice-whatsapp-button"
-                                                        disabled={!selectedOpenOrder?.customerPhone
-                                                            && normalizeCustomerPhoneNumber(invoiceWhatsAppPhone) === null}
-                                                        onClick={openInvoiceInWhatsApp}
-                                                        type="button"
-                                                    >
-                                                        Send in WhatsApp
-                                                    </button>
-                                                </div>
-                                            </header>
-                                            <p id="invoice-whatsapp-help" className="invoice-whatsapp-help">
-                                                WhatsApp opens with the invoice details. Attach the downloaded PDF and tap Send.
-                                            </p>
-                                            <iframe src={invoiceUrl} title="Invoice preview" />
-                                        </section>
-                                    )}
-                                </section>
-                            )}
-
-                            {message && (
-                                <p
-                                    aria-live="polite"
-                                    className={`table-order-message table-order-message-${message.tone}`}
-                                    role={message.tone === 'error' ? 'alert' : 'status'}
-                                >
-                                    {message.text}
-                                </p>
-                            )}
-                            {hasRecentOrderSave && (
-                                <p className="table-order-save-status" role="status">
-                                    Last saved at {formatTime(lastOrderSave.savedAt.toISOString())}
-                                </p>
-                            )}
-                            {hasFailedOrderSave && (
-                                <button className="table-order-retry" disabled={isOrderSaving} onClick={retryOrderSave} type="button">
-                                    Retry save
-                                </button>
-                            )}
-                        </section>
-
-                        <section aria-labelledby="table-order-summary-heading" className="table-order-summary">
-                            <header className="table-order-summary-heading">
-                                <div>
-                                    <p className="eyebrow">Current order</p>
-                                    <h2 id="table-order-summary-heading">{selectedSeatingName} order</h2>
-                                </div>
-                                <span>{selectedOrderLines.length} {selectedOrderLines.length === 1 ? 'item' : 'items'}</span>
-                            </header>
-
-                            {selectedOrderLines.length > 0 && (
-                                <p className="table-order-customer-label">
-                                    Ordering name: <strong>{formatCustomerName(customerNameForSave)}</strong>
-                                </p>
-                            )}
-                            {selectedOpenOrder?.orderDescription && <p className="table-order-description-summary">
-                                <strong>Description:</strong> {selectedOpenOrder.orderDescription}
-                            </p>}
-
-                            {selectedOrderLines.length === 0 ? (
-                                <>
-                                    <p className="table-order-empty">No items selected for {selectedSeatingName}.</p>
-                                    {hasJustPaid && (
-                                        <button className="table-restart" onClick={restartTable} type="button">Restart table</button>
-                                    )}
-                                    {hasJustPaid && lastPaidOrder && (
-                                        <section aria-labelledby="paid-receipt-heading" className="paid-receipt-panel">
-                                            <header className="paid-receipt-heading">
-                                                <div>
-                                                    <p className="eyebrow">Payment complete</p>
-                                                    <h3 id="paid-receipt-heading">Receipt {lastPaidOrder.billNumber}</h3>
-                                                </div>
-                                                <strong>{currencyFormatter.format(lastPaidOrder.total)}</strong>
-                                            </header>
-                                            <p>
-                                                {getPaymentMethodLabel(lastPaidOrder.paymentMethod)} payment recorded {formatDateTime(lastPaidOrder.paidAt)}.
-                                            </p>
-                                            {lastPaidOrder.paymentMethod === 'SPLIT' && <p>Cash: {currencyFormatter.format(lastPaidOrder.cashAmount ?? 0)} · Online: {currencyFormatter.format(lastPaidOrder.onlineAmount ?? 0)}</p>}
-                                            <p className="table-order-customer-label">
-                                                Ordering name: <strong>{formatCustomerName(lastPaidOrder.customerName)}</strong>
-                                            </p>
-                                            <button className="invoice-create" onClick={createPaidReceipt} type="button">
-                                                {paidReceiptUrl ? 'Refresh paid receipt' : 'Create paid receipt'}
-                                            </button>
-
-                                            {paidReceiptUrl && (
-                                                <section aria-labelledby="paid-receipt-preview-heading" className="invoice-preview paid-receipt-preview">
-                                                    <header className="invoice-preview-heading">
-                                                        <h3 id="paid-receipt-preview-heading">Paid receipt preview</h3>
-                                                        <div className="paid-receipt-actions">
-                                                            <a className="invoice-download" download={getReceiptFileName(lastPaidOrder.billNumber)} href={paidReceiptUrl}>
-                                                                Download receipt
-                                                            </a>
-                                                            <button className="invoice-print" disabled={!isPaidReceiptReadyToPrint} onClick={printPaidReceipt} type="button">
-                                                                Print receipt
-                                                            </button>
-                                                        </div>
-                                                    </header>
-                                                    <iframe
-                                                        onLoad={() => setIsPaidReceiptReadyToPrint(true)}
-                                                        ref={paidReceiptFrameRef}
-                                                        src={paidReceiptUrl}
-                                                        title="Paid receipt preview"
-                                                    />
-                                                </section>
-                                            )}
-                                        </section>
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    <div className="table-order-table-wrap">
-                                        <table aria-label={`Order for ${selectedSeatingName}`} className="table-order-table">
-                                            <thead>
-                                                <tr>
-                                                    <th scope="col">Item</th>
-                                                    <th scope="col">Quantity</th>
-                                                    <th scope="col">Unit price</th>
-                                                    <th scope="col">Price</th>
-                                                    <th scope="col">Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {orderLineGroups.map((group) => (
-                                                    <Fragment key={group.section}>
-                                                        {!isCommitteeOrder && <tr className="table-order-section-row">
-                                                            <th colSpan={5} scope="rowgroup">
-                                                                {group.section}{group.section === 'Others' ? ' (no bill discount)' : ''}
-                                                            </th>
-                                                        </tr>}
-                                                        {group.lines.map((orderLine) => (
-                                                            <tr key={getOrderLineKey(orderLine)}>
-                                                                <td>{getOrderLineDisplayName(orderLine)}</td>
-                                                                <td>
-                                                                    <div
-                                                                        aria-label={`Quantity for ${getOrderLineDisplayName(orderLine)}`}
-                                                                        className="table-quantity-control"
-                                                                        role="group"
-                                                                    >
-                                                                        <button
-                                                                            aria-label={`Decrease ${getOrderLineDisplayName(orderLine)} quantity`}
-                                                                            className="table-quantity-step"
-                                                                            disabled={isOrderActionInProgress || orderLine.quantity <= 1}
-                                                                            onClick={() => adjustOrderLineQuantity(orderLine, -1)}
-                                                                            type="button"
-                                                                        >
-                                                                            -
-                                                                        </button>
-                                                                        <output>{orderLine.quantity}</output>
-                                                                        <button
-                                                                            aria-label={`Increase ${getOrderLineDisplayName(orderLine)} quantity`}
-                                                                            className="table-quantity-step"
-                                                                            disabled={isOrderActionInProgress}
-                                                                            onClick={() => adjustOrderLineQuantity(orderLine, 1)}
-                                                                            type="button"
-                                                                        >
-                                                                            +
-                                                                        </button>
-                                                                    </div>
-                                                                </td>
-                                                                <td>{currencyFormatter.format(orderLine.unitPrice)}</td>
-                                                                <td>{currencyFormatter.format(getLineTotal(orderLine))}</td>
-                                                                <td>
-                                                                    <button
-                                                                        aria-label={`Remove ${getOrderLineDisplayName(orderLine)} from ${selectedSeatingName}`}
-                                                                        className="table-order-remove"
-                                                                        disabled={isOrderActionInProgress}
-                                                                        onClick={() => removeOrderLine(orderLine)}
-                                                                        type="button"
-                                                                    >
-                                                                        Remove
-                                                                    </button>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                        {!isCommitteeOrder && <tr className="table-order-section-subtotal-row">
-                                                            <th colSpan={3} scope="row">
-                                                                {group.section === 'General' ? 'General total' : 'Others total'}
-                                                            </th>
-                                                            <td>{currencyFormatter.format(group.section === 'General' ? generalSubtotal : othersSubtotal)}</td>
-                                                            <td></td>
-                                                        </tr>}
-                                                    </Fragment>
-                                                ))}
-                                            </tbody>
-                                            <tfoot>
-                                                <tr>
-                                                    <th colSpan={3} scope="row">{isCommitteeOrder ? 'Total price' : 'Combined subtotal'}</th>
-                                                    <td>{currencyFormatter.format(selectedOrderSubtotal)}</td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <th colSpan={3} scope="row">{isCommitteeOrder ? 'Discount' : `Bill discount (${selectedDiscountPercent.toFixed(2)}% of General)`}</th>
-                                                    <td>-{currencyFormatter.format(selectedDiscountAmount)}</td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <th colSpan={3} scope="row">{isCommitteeOrder ? 'Final price' : 'Final bill'}</th>
-                                                    <td>{currencyFormatter.format(selectedOrderTotal)}</td>
-                                                    <td></td>
-                                                </tr>
-                                            </tfoot>
-                                        </table>
-                                    </div>
-
-                                    {isOrderCompleted && (
-                                        <div className="table-payment-actions">
-                                            <p>Settle this order</p>
-                                            <label className="table-split-toggle">
-                                                <input checked={isSplitPayment} disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails} onChange={(event) => {
-                                                    setIsSplitPayment(event.target.checked)
-                                                    setSplitCashAmount('')
-                                                    setSplitOnlineAmount('')
-                                                    setUpiQrSeatingId(null)
-                                                    setUpiQrProvider('primary')
-                                                    setMessage(null)
-                                                }} type="checkbox" />
-                                                Split payment
-                                            </label>
-                                            {isSplitPayment && <fieldset className="table-split-fields" disabled={isOrderActionInProgress}>
-                                                <legend>Cash + Online</legend>
-                                                <label htmlFor="split-cash-amount">Cash amount (INR)
-                                                    <input id="split-cash-amount" inputMode="decimal" min="0.01" onChange={(event) => setSplitCashAmount(event.target.value)} step="0.01" type="number" value={splitCashAmount} />
-                                                </label>
-                                                <label htmlFor="split-online-amount">Online amount (INR)
-                                                    <input id="split-online-amount" inputMode="decimal" min="0.01" onChange={(event) => setSplitOnlineAmount(event.target.value)} step="0.01" type="number" value={splitOnlineAmount} />
-                                                </label>
-                                                {(splitCashAmount !== '' || splitOnlineAmount !== '') && !isValidSplit && <p className="table-split-validation" role="alert">Cash and online amounts must be positive and add up to {currencyFormatter.format(selectedOrderTotal)}.</p>}
-                                            </fieldset>}
-                                            <div className="table-payment-buttons">
-                                                {!isSplitPayment && upiVpa.trim() !== '' && (
-                                                    <button
-                                                        className="table-payment-upi"
-                                                        disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
-                                                        onClick={() => {
-                                                            const isQrVisible = upiQrSeatingId === selectedSeating.id
-                                                            setUpiQrSeatingId(isQrVisible ? null : selectedSeating.id)
-                                                            setUpiQrProvider('primary')
-                                                        }}
-                                                        type="button"
-                                                    >
-                                                        {upiQrSeatingId === selectedSeating.id ? 'Hide UPI QR' : 'Show UPI QR'}
-                                                    </button>
-                                                )}
-                                                {!isSplitPayment && <button
-                                                    className="table-payment-cash"
-                                                    disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
-                                                    onClick={() => requestPayment('CASH')}
-                                                    type="button"
-                                                >
-                                                    {paymentMethodInProgress === 'CASH' ? 'Recording cash payment...' : 'Paid by cash'}
-                                                </button>}
-                                                {!isSplitPayment && <button
-                                                    className="table-payment-online"
-                                                    disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails}
-                                                    onClick={() => requestPayment('ONLINE')}
-                                                    type="button"
-                                                >
-                                                    {paymentMethodInProgress === 'ONLINE' ? 'Recording online payment...' : 'Paid online'}
-                                                </button>}
-                                                {isSplitPayment && <button className="table-payment-online" disabled={isOrderActionInProgress || isOrderDetailsDirty || hasInvalidCustomerDetails || !isValidSplit} onClick={() => requestPayment('SPLIT')} type="button">
-                                                    {paymentMethodInProgress === 'SPLIT' ? 'Recording split payment...' : 'Record split payment'}
-                                                </button>}
-                                            </div>
-                                            {selectedUpiVpa.trim() !== '' && (isSplitPayment ? isValidSplit : upiQrSeatingId === selectedSeating.id) && (
-                                                <section aria-labelledby="table-upi-qr-heading" className="table-upi-qr">
-                                                    <QRCodeSVG
-                                                        includeMargin
-                                                        size={208}
-                                                        title="UPI payment QR"
-                                                        value={createUpiPaymentUri(qrPaymentAmount, selectedSeatingName, restaurantName, selectedUpiVpa)}
-                                                    />
-                                                    <div>
-                                                        <p className="eyebrow">UPI payment</p>
-                                                        <h3 id="table-upi-qr-heading">Scan to pay {currencyFormatter.format(qrPaymentAmount)}</h3>
-                                                        <p>Pay to {selectedUpiVpa}</p>
-                                                        {secondaryUpiVpa.trim() !== '' && <fieldset className="table-upi-account-choice">
-                                                            <legend>QR account</legend>
-                                                            <label>
-                                                                <input
-                                                                    checked={upiQrProvider === 'primary'}
-                                                                    name="upi-qr-provider"
-                                                                    onChange={() => setUpiQrProvider('primary')}
-                                                                    type="radio"
-                                                                />
-                                                                Primary
-                                                            </label>
-                                                            <label>
-                                                                <input
-                                                                    checked={upiQrProvider === 'secondary'}
-                                                                    name="upi-qr-provider"
-                                                                    onChange={() => setUpiQrProvider('secondary')}
-                                                                    type="radio"
-                                                                />
-                                                                Show secondary
-                                                            </label>
-                                                        </fieldset>}
-                                                        {!isSplitPayment && <p>After the payer confirms in their UPI app, select “Paid online” to record payment.</p>}
-                                                    </div>
-                                                </section>
-                                            )}
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </section>
-                    </div>
-                )}
+                {(isCommitteeOrder || hasJustPaid) && selectedOrderEditor}
             </section>
 
             {committeeMemberPendingDeletion && <ConfirmationDialog
@@ -2328,6 +2517,24 @@ function TableManager({ isActive = true, canManageCommitteeMembers = true }: Tab
                 >
                     <strong>{currencyFormatter.format(selectedOrderTotal)}</strong>
                     {pendingPaymentMethod === 'SPLIT' && <p>Cash: {currencyFormatter.format((splitCashPaise ?? 0) / 100)} · Online: {currencyFormatter.format((splitOnlinePaise ?? 0) / 100)}</p>}
+                </ConfirmationDialog>
+            )}
+            {pendingSeatingShift && (
+                <ConfirmationDialog
+                    confirmLabel={`Confirm shift to ${pendingSeatingShift.toName}`}
+                    isConfirming={isShiftingSeating}
+                    message={`Move the order from ${pendingSeatingShift.fromDisplayName}${pendingSeatingShift.fromDisplayName === pendingSeatingShift.fromName ? '' : ` (${pendingSeatingShift.fromName})`} to ${pendingSeatingShift.toName}? The items, contact, notes, table name, and payment status will move with it.`}
+                    onCancel={() => setPendingSeatingShift(null)}
+                    onConfirm={() => void shiftSelectedSeating()}
+                    title={`Shift to ${pendingSeatingShift.targetKind === 'table' ? 'Indoor' : 'Outdoor'}?`}
+                >
+                    <div className="table-shift-confirmation-route">
+                        <span>{pendingSeatingShift.fromDisplayName}</span>
+                        {pendingSeatingShift.fromDisplayName !== pendingSeatingShift.fromName && <small>({pendingSeatingShift.fromName})</small>}
+                        <span aria-hidden="true">→</span>
+                        <strong>{pendingSeatingShift.toDisplayName}</strong>
+                    </div>
+                    <p>{selectedOrderLines.length} {selectedOrderLines.length === 1 ? 'item' : 'items'} · {currencyFormatter.format(selectedOrderTotal)}</p>
                 </ConfirmationDialog>
             )}
         </div>

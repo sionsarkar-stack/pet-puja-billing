@@ -2,13 +2,19 @@ import { type KeyboardEvent, useRef, useState } from 'react'
 import type { UserMode } from './userMode'
 import DiscountManager from './DiscountManager'
 import MenuManager from './MenuManager'
+import ProductDetailsManager from './ProductDetailsManager'
+import ContractorManager from './ContractorManager'
 import type { ThemePreference } from './theme'
+import { useRestaurantConfiguration } from './RestaurantConfiguration'
+import { getUpiQrVpa, type UpiQrProvider } from './upiPayment'
 
-type DetailsView = 'menu' | 'discount' | 'theme'
+type DetailsView = 'menu' | 'product-details' | 'contractor' | 'action' | 'theme'
 
 const views: Array<{ id: DetailsView; label: string }> = [
     { id: 'menu', label: 'Menu' },
-    { id: 'discount', label: 'Discount' },
+    { id: 'product-details', label: 'Product' },
+    { id: 'contractor', label: 'Contractor' },
+    { id: 'action', label: 'Action' },
     { id: 'theme', label: 'Theme' },
 ]
 
@@ -16,11 +22,19 @@ function DetailsManager({
     mode,
     onThemeChange,
     theme,
+    upiQrProvider,
+    onUpiQrProviderChange,
 }: {
     mode: UserMode
     onThemeChange: (theme: ThemePreference) => void
     theme: ThemePreference
+    upiQrProvider: UpiQrProvider
+    onUpiQrProviderChange: (provider: UpiQrProvider) => void
 }) {
+    const { upiVpa, secondaryUpiVpa = '' } = useRestaurantConfiguration()
+    const selectedUpiVpa = getUpiQrVpa(upiQrProvider, upiVpa, secondaryUpiVpa)
+    const activeProvider = upiQrProvider === 'secondary' && secondaryUpiVpa.trim()
+        ? 'secondary' : upiVpa.trim() ? 'primary' : 'secondary'
     const [activeView, setActiveView] = useState<DetailsView>('menu')
     const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
@@ -62,8 +76,32 @@ function DetailsManager({
                     <MenuManager canManage={mode === 'ADMIN'} />
                 </section>
             )}
-            {activeView === 'discount' && (
-                <section aria-labelledby="details-tab-discount" className="details-panel" id="details-panel-discount" role="tabpanel">
+            {activeView === 'product-details' && (
+                <section aria-labelledby="details-tab-product-details" className="details-panel" id="details-panel-product-details" role="tabpanel">
+                    <ProductDetailsManager canManage={mode === 'ADMIN'} />
+                </section>
+            )}
+            {activeView === 'contractor' && (
+                <section aria-labelledby="details-tab-contractor" className="details-panel" id="details-panel-contractor" role="tabpanel">
+                    <ContractorManager canManage={mode === 'ADMIN'} />
+                </section>
+            )}
+            {activeView === 'action' && (
+                <section aria-labelledby="details-tab-action" className="details-panel action-settings" id="details-panel-action" role="tabpanel">
+                    <fieldset className="theme-options" disabled={!selectedUpiVpa}>
+                        <legend>UPI QR account</legend>
+                        <div className="theme-option-list">
+                            {(['primary', 'secondary'] as const).map((provider) => {
+                                const vpa = (provider === 'primary' ? upiVpa : secondaryUpiVpa).trim()
+                                if (!vpa) return null
+                                return <label className="theme-option" key={provider}>
+                                    <input checked={activeProvider === provider} name="upi-qr-provider" onChange={() => onUpiQrProviderChange(provider)} type="radio" />
+                                    <span className="theme-option-copy"><strong>{provider === 'primary' ? 'Primary' : 'Secondary'}</strong><span>{vpa}</span></span>
+                                </label>
+                            })}
+                        </div>
+                        {!selectedUpiVpa && <p>No UPI account configured.</p>}
+                    </fieldset>
                     <DiscountManager canManage={mode === 'ADMIN'} />
                 </section>
             )}

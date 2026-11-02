@@ -102,6 +102,7 @@ class AuthControllerTest {
                                 .andExpect(jsonPath("$.mode").value("CAPTAIN"));
                 mockMvc.perform(get("/api/open-orders").session(session)).andExpect(status().isOk());
                 mockMvc.perform(get("/api/menu").session(session)).andExpect(status().isOk());
+                mockMvc.perform(get("/api/contractors").session(session)).andExpect(status().isOk());
                 mockMvc.perform(get("/api/history").session(session)).andExpect(status().isOk());
                 mockMvc.perform(get("/api/customers/search").param("query", "9876543210").session(session))
                                 .andExpect(status().isOk())
@@ -137,6 +138,10 @@ class AuthControllerTest {
                                 .content("{\"name\":\"Test dish\",\"description\":null,\"discountApplied\":0,\"price\":100}"))
                                 .andExpect(status().isForbidden());
                 mockMvc.perform(delete("/api/menu/1").session(session)).andExpect(status().isForbidden());
+                mockMvc.perform(post("/api/contractors").session(session)
+                                .contentType(APPLICATION_JSON)
+                                .content("{\"name\":\"Captain contractor\",\"phoneNumber\":\"9876543210\"}"))
+                                .andExpect(status().isForbidden());
                 mockMvc.perform(get("/api/expenses").session(session)).andExpect(status().isForbidden());
                 mockMvc.perform(get("/api/daily-closings").session(session)).andExpect(status().isForbidden());
                 mockMvc.perform(get("/api/balance-sheet").session(session)).andExpect(status().isForbidden());

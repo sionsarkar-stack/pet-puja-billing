@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -19,6 +21,12 @@ public interface BillRepository extends JpaRepository<Bill, Long> {
 
 	@EntityGraph(attributePaths = { "lines", "customer" })
 	Optional<Bill> findByOpenTableName(String openTableName);
+
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select bill from Bill bill where bill.openTableName = :openTableName")
+	Optional<Bill> findByOpenTableNameForUpdate(@Param("openTableName") String openTableName);
+
+	boolean existsByOpenTableName(String openTableName);
 
 	@EntityGraph(attributePaths = { "lines", "customer" })
 	List<Bill> findAllByStatusOrderByCreatedAtDesc(BillStatus status);

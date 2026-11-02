@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ConfirmationDialog from './ConfirmationDialog'
+import { getBusinessDateInputValue } from './businessDay'
 import {
     apiBaseUrl,
     currencyFormatter,
@@ -12,6 +13,7 @@ import {
     type DailyClosing,
     type DailyClosingPreview,
 } from './financial'
+import { getIndividualSavedTotals, getPeriodLabel, type ProfitPeriod } from './profitFact'
 
 type DailyClosingMessage = {
     text: string
@@ -23,6 +25,15 @@ type DailyClosingManagerProps = {
     onBusinessDayStatusChange: (status: BusinessDayStatus) => void
 }
 
+type SavedTotalsView = 'daily' | 'individual'
+
+const individualPeriods: Array<{ id: ProfitPeriod; label: string }> = [
+    { id: 'day', label: 'Day' },
+    { id: 'month', label: 'Month' },
+    { id: 'quarter', label: 'Quarter' },
+    { id: 'all', label: 'Till now' },
+]
+
 function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: DailyClosingManagerProps) {
     const [dailyClosings, setDailyClosings] = useState<DailyClosing[]>([])
     const [message, setMessage] = useState<DailyClosingMessage | null>(null)
@@ -32,10 +43,21 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const [closingPreview, setClosingPreview] = useState<DailyClosingPreview | null>(null)
     const [activeDayPreview, setActiveDayPreview] = useState<DailyClosingPreview | null>(null)
+    const [savedTotalsView, setSavedTotalsView] = useState<SavedTotalsView>('daily')
+    const [individualPeriod, setIndividualPeriod] = useState<ProfitPeriod>('day')
+    const [individualSelectedDate, setIndividualSelectedDate] = useState(() => getBusinessDateInputValue(new Date()))
+    const [savedTotalsRefreshKey, setSavedTotalsRefreshKey] = useState(0)
     const currentActiveDayPreview = businessDayStatus.active
         && activeDayPreview?.startedAt === businessDayStatus.startedAt
         ? activeDayPreview
         : null
+    const individualTotalsResult = getIndividualSavedTotals(
+        dailyClosings,
+        currentActiveDayPreview,
+        individualPeriod,
+        individualSelectedDate,
+        new Date(),
+    )
 
     useEffect(() => {
         const controller = new AbortController()
@@ -61,7 +83,7 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
 
         void loadDailyClosings()
         return () => controller.abort()
-    }, [])
+    }, [savedTotalsRefreshKey])
 
     useEffect(() => {
         if (!businessDayStatus.active) return
@@ -94,7 +116,7 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
             window.clearInterval(intervalId)
             controller.abort()
         }
-    }, [businessDayStatus.active, businessDayStatus.startedAt])
+    }, [businessDayStatus.active, businessDayStatus.startedAt, savedTotalsRefreshKey])
 
     async function startBusinessDay() {
         if (isSaving || businessDayStatus.active) return
@@ -244,11 +266,30 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                         </ConfirmationDialog>
                     )}
 
-                    <section aria-labelledby="daily-closing-history-heading" className="financial-list daily-closing-list">
+                    <nav aria-label="Saved totals views" className="daily-saved-total-tabs" role="tablist">
+                        <button
+                            aria-controls="daily-saved-totals-panel"
+                            aria-selected={savedTotalsView === 'daily'}
+                            id="daily-saved-totals-tab"
+                            onClick={() => setSavedTotalsView('daily')}
+                            role="tab"
+                            type="button"
+                        >Daily Saved Totals</button>
+                        <button
+                            aria-controls="individual-saved-totals-panel"
+                            aria-selected={savedTotalsView === 'individual'}
+                            id="individual-saved-totals-tab"
+                            onClick={() => setSavedTotalsView('individual')}
+                            role="tab"
+                            type="button"
+                        >Individual Saved Totals</button>
+                    </nav>
+
+                    {savedTotalsView === 'daily' && <section aria-labelledby="daily-closing-history-heading" className="financial-list daily-closing-list" id="daily-saved-totals-panel" role="tabpanel">
                         <header className="financial-list-heading">
                             <div>
                                 <p className="eyebrow">Closing history</p>
-                                <h2 id="daily-closing-history-heading">Saved daily totals</h2>
+                                <h2 id="daily-closing-history-heading">Daily Saved Totals</h2>
                             </div>
                             <span>{dailyClosings.length} {dailyClosings.length === 1 ? 'day' : 'days'}</span>
                         </header>
@@ -303,7 +344,94 @@ function DailyClosingManager({ businessDayStatus, onBusinessDayStatusChange }: D
                                 </table>
                             </div>
                         )}
-                    </section>
+                    </section>}
+
+                    {savedTotalsView === 'individual' && <section aria-labelledby="individual-saved-totals-heading" className="financial-list individual-saved-totals-list" id="individual-saved-totals-panel" role="tabpanel">
+                        <header className="financial-list-heading">
+                            <div>
+                                <p className="eyebrow">Income less refunds and expenses</p>
+                                <h2 id="individual-saved-totals-heading">Individual Saved Totals</h2>
+                            </div>
+                        </header>
+
+                        <div className="individual-saved-totals-controls">
+                            <fieldset className="profit-fact-periods">
+                                <legend>Period</legend>
+                                <div role="group" aria-label="Individual totals period">
+                                    {individualPeriods.map((period) => (
+                                        <button
+                                            aria-pressed={individualPeriod === period.id}
+                                            key={period.id}
+                                            onClick={() => setIndividualPeriod(period.id)}
+                                            type="button"
+                                        >
+                                            {period.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </fieldset>
+                            {individualPeriod !== 'all' && (
+                                <label className="profit-fact-date" htmlFor="individual-saved-totals-date">
+                                    <span>Anchor date</span>
+                                    <input
+                                        id="individual-saved-totals-date"
+                                        max={getBusinessDateInputValue(new Date())}
+                                        onChange={(event) => setIndividualSelectedDate(event.target.value)}
+                                        type="date"
+                                        value={individualSelectedDate}
+                                    />
+                                </label>
+                            )}
+                            <p className="individual-saved-totals-period">{getPeriodLabel(individualPeriod, individualSelectedDate)}</p>
+                            <button
+                                aria-label="Refresh individual totals"
+                                className="profit-fact-refresh"
+                                onClick={() => setSavedTotalsRefreshKey((currentKey) => currentKey + 1)}
+                                type="button"
+                            >Refresh</button>
+                        </div>
+
+                        {individualTotalsResult.unrecordedDays > 0 && (
+                            <p className="individual-saved-totals-note" role="note">
+                                {individualTotalsResult.unrecordedDays} {individualTotalsResult.unrecordedDays === 1 ? 'closed day has' : 'closed days have'} no individual snapshot and {individualTotalsResult.unrecordedDays === 1 ? 'is' : 'are'} excluded from these totals.
+                            </p>
+                        )}
+
+                        {individualTotalsResult.totals.length === 0 ? (
+                            <p className="financial-empty">
+                                {individualTotalsResult.unrecordedDays > 0
+                                    ? 'No individual totals were recorded for this period.'
+                                    : dailyClosings.length === 0 && !businessDayStatus.active
+                                        ? 'No business days have been closed yet.'
+                                        : 'No individual totals in this period.'}
+                            </p>
+                        ) : (
+                            <div className="financial-table-wrap individual-saved-totals-table-wrap">
+                                <table aria-label="Individual saved totals" className="financial-table individual-saved-totals-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Member / source</th>
+                                            <th scope="col">Income</th>
+                                            <th scope="col">Refunds</th>
+                                            <th scope="col">Expenses</th>
+                                            <th scope="col">Difference</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {individualTotalsResult.totals.map((total) => (
+                                            <tr key={total.source}>
+                                                <th scope="row">{total.source}</th>
+                                                <td>{currencyFormatter.format(total.income)}</td>
+                                                <td>{currencyFormatter.format(-total.refunds)}</td>
+                                                <td>{currencyFormatter.format(total.expenses)}</td>
+                                                <td>{currencyFormatter.format(total.difference)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </section>}
                 </>
             )}
         </div>

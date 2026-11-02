@@ -11,12 +11,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -68,6 +71,9 @@ class FinancialControllerTest {
         @Autowired
         private BillDiscountTierRepository billDiscountTierRepository;
 
+        @Autowired
+        private JdbcTemplate jdbcTemplate;
+
         private MockMvc mockMvc;
 
         @BeforeEach
@@ -89,7 +95,6 @@ class FinancialControllerTest {
                                 .build();
         }
 
-        @Test
         void recordsPaidOrdersInHistoryAndCalculatesRevenueAfterExpenses() throws Exception {
                 var menuItem = menuItemRepository.save(MenuItem.create(
                                 "Paneer Tikka",
@@ -174,7 +179,60 @@ class FinancialControllerTest {
         }
 
         @Test
-        void requiresAndStoresKeBhaiWhenExpenseAddedByIsOthers() throws Exception {
+        void shiftsOpenOrderAcrossIndoorAndOutdoorWithConfirmationSafeConflictHandling() throws Exception {
+                var menuItem = menuItemRepository.save(MenuItem.create(
+                                "Paneer Tikka", "Char-grilled paneer", new BigDecimal("10.00"),
+                                new BigDecimal("200.00")));
+                var ownerSession = signIn();
+                mockMvc.perform(put("/api/open-orders")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"tableName":"Table 1","tableLabel":"Birthday group","orderDescription":"Bring a high chair","customerName":"Asha","lines":[{"menuItemId":%d,"quantity":2}],"completed":true}
+                                                """
+                                                .formatted(menuItem.getId())))
+                                .andExpect(status().isOk());
+                mockMvc.perform(put("/api/open-orders")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"tableName":"Outdoor 1","lines":[{"menuItemId":%d,"quantity":1}],"completed":false}
+                                                """
+                                                .formatted(menuItem.getId())))
+                                .andExpect(status().isOk());
+
+                mockMvc.perform(put("/api/open-orders/shift")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"fromTableName":"Table 1","toTableName":"Outdoor 2"}
+                                                """))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.tableName").value("Outdoor 2"))
+                                .andExpect(jsonPath("$.tableLabel").value("Birthday group"))
+                                .andExpect(jsonPath("$.orderDescription").value("Bring a high chair"))
+                                .andExpect(jsonPath("$.customerName").value("Asha"))
+                                .andExpect(jsonPath("$.completed").value(true))
+                                .andExpect(jsonPath("$.lines[0].quantity").value(2))
+                                .andExpect(jsonPath("$.total").value(360));
+
+                mockMvc.perform(put("/api/open-orders/shift")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"fromTableName":"Outdoor 2","toTableName":"Outdoor 1"}
+                                                """))
+                                .andExpect(status().isConflict());
+
+                mockMvc.perform(get("/api/open-orders").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$[?(@.tableName == 'Table 1')]").isEmpty())
+                                .andExpect(jsonPath("$[?(@.tableName == 'Outdoor 1')].total").value(180.0))
+                                .andExpect(jsonPath("$[?(@.tableName == 'Outdoor 2')].total").value(360.0));
+        }
+
+        @Test
+        void acceptsNamedAndCashExpensesButRejectsOthers() throws Exception {
                 var ownerSession = signIn();
 
                 mockMvc.perform(post("/api/expenses")
@@ -191,8 +249,131 @@ class FinancialControllerTest {
                                 .content("""
                                                 {"title":"Supplies","amount":50,"addedBy":"Others","keBhai":" Arun "}
                                                 """))
-                                .andExpect(status().isCreated())
+                                .andExpect(status().isBadRequest());
+
+                for (var addedBy : List.of("Rimo", "Rjoe", "Rishi", "Dinda", "Cash")) {
+                        mockMvc.perform(post("/api/expenses")
+                                        .session(ownerSession)
+                                        .contentType(APPLICATION_JSON)
+                                        .content("""
+                                                        {"title":"Supplies","amount":50,"addedBy":"%s"}
+                                                        """.formatted(addedBy)))
+                                        .andExpect(status().isCreated())
+                                        .andExpect(jsonPath("$.addedBy").value(addedBy));
+                }
+
+                mockMvc.perform(get("/api/expenses").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.length()").value(5))
+                                .andExpect(jsonPath("$[?(@.addedBy == 'Cash')].title").value("Supplies"));
+        }
+
+        @Test
+        void shiftsOpenOrdersAcrossIndoorAndOutdoorWhilePreservingOrderDetails() throws Exception {
+                var menuItem = menuItemRepository.save(MenuItem.create(
+                                "Paneer Tikka", "Char-grilled paneer", new BigDecimal("10.00"),
+                                new BigDecimal("200.00")));
+                var ownerSession = signIn();
+
+                mockMvc.perform(put("/api/open-orders")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"tableName":"Table 1","tableLabel":"Family","orderDescription":"No onions","customerName":"Asha","lines":[{"menuItemId":%d,"quantity":2}],"completed":true}
+                                                """
+                                                .formatted(menuItem.getId())))
+                                .andExpect(status().isOk());
+                mockMvc.perform(put("/api/open-orders")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"tableName":"Outdoor 1","lines":[{"menuItemId":%d,"quantity":1}],"completed":false}
+                                                """
+                                                .formatted(menuItem.getId())))
+                                .andExpect(status().isOk());
+
+                mockMvc.perform(put("/api/open-orders/shift")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"fromTableName":"Table 1","toTableName":"Outdoor 2"}
+                                                """))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.tableName").value("Outdoor 2"))
+                                .andExpect(jsonPath("$.tableLabel").value("Family"))
+                                .andExpect(jsonPath("$.orderDescription").value("No onions"))
+                                .andExpect(jsonPath("$.customerName").value("Asha"))
+                                .andExpect(jsonPath("$.completed").value(true))
+                                .andExpect(jsonPath("$.lines[0].quantity").value(2))
+                                .andExpect(jsonPath("$.total").value(360));
+
+                mockMvc.perform(put("/api/open-orders/shift")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"fromTableName":"Outdoor 1","toTableName":"Outdoor 2"}
+                                                """))
+                                .andExpect(status().isConflict());
+
+                mockMvc.perform(get("/api/open-orders").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$[?(@.tableName == 'Table 1')]").isEmpty())
+                                .andExpect(jsonPath("$[?(@.tableName == 'Outdoor 1')].total").value(180.0))
+                                .andExpect(jsonPath("$[?(@.tableName == 'Outdoor 2')].total").value(360.0));
+        }
+
+        @Test
+        void updatesExpensesPreservingCreatedAtAndUnchangedLegacyAttribution() throws Exception {
+                var ownerSession = signIn();
+                mockMvc.perform(post("/api/expenses")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Groceries","amount":75,"addedBy":"Dinda","description":"Market"}
+                                                """))
+                                .andExpect(status().isCreated());
+
+                var createdExpense = expenseRepository.findAllByOrderByCreatedAtDesc().get(0);
+                var createdAt = createdExpense.getCreatedAt().toString();
+                mockMvc.perform(put("/api/expenses/{expenseId}", createdExpense.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Updated groceries","amount":95.50,"addedBy":"Cash","description":"Updated market run"}
+                                                """))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.title").value("Updated groceries"))
+                                .andExpect(jsonPath("$.amount").value(95.50))
+                                .andExpect(jsonPath("$.addedBy").value("Cash"))
+                                .andExpect(jsonPath("$.description").value("Updated market run"))
+                                .andExpect(jsonPath("$.createdAt").value(createdAt));
+
+                var legacyExpense = expenseRepository.save(Expense.create("Old supplies", new BigDecimal("20.00"),
+                                "Others: Arun", "Old receipt"));
+                mockMvc.perform(put("/api/expenses/{expenseId}", legacyExpense.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Old supplies updated","amount":25,"description":"Reviewed"}
+                                                """))
+                                .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.addedBy").value("Others: Arun"));
+
+                mockMvc.perform(put("/api/expenses/{expenseId}", legacyExpense.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Invalid","amount":25,"addedBy":"Others"}
+                                                """))
+                                .andExpect(status().isBadRequest());
+
+                mockMvc.perform(put("/api/expenses/{expenseId}", 99999L)
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"Missing","amount":25,"addedBy":"Cash"}
+                                                """))
+                                .andExpect(status().isNotFound());
         }
 
         @Test
@@ -782,12 +963,12 @@ class FinancialControllerTest {
                                         .initSql("CREATE DOMAIN IF NOT EXISTS TIMESTAMPTZ AS TIMESTAMP WITH TIME ZONE")
                                         .locations("classpath:db/migration").load();
                         flyway.migrate();
-                        org.junit.jupiter.api.Assertions.assertEquals("27",
+                        org.junit.jupiter.api.Assertions.assertEquals("31",
                                         flyway.info().current().getVersion().toString());
                         try (var statement = connection.createStatement();
                                         var rows = statement
-                                                        .executeQuery("SELECT cash_amount, online_amount FROM bill")) {
-                                org.junit.jupiter.api.Assertions.assertEquals(2, rows.getMetaData().getColumnCount());
+                                                        .executeQuery("SELECT cash_amount, online_amount, upi_qr_provider FROM bill")) {
+                                org.junit.jupiter.api.Assertions.assertEquals(3, rows.getMetaData().getColumnCount());
                         }
                 }
         }
@@ -857,12 +1038,13 @@ class FinancialControllerTest {
                 }
                 mockMvc.perform(post("/api/payments").session(session).contentType(APPLICATION_JSON)
                                 .content("""
-                                                {"tableName":"Table 1","paymentMethod":"SPLIT","cashAmount":30,"onlineAmount":70}
+                                                {"tableName":"Table 1","paymentMethod":"SPLIT","cashAmount":30,"onlineAmount":70,"upiQrProvider":"SECONDARY"}
                                                 """))
                                 .andExpect(status().isCreated())
                                 .andExpect(jsonPath("$.paymentMethod").value("SPLIT"))
                                 .andExpect(jsonPath("$.cashAmount").value(30))
                                 .andExpect(jsonPath("$.onlineAmount").value(70))
+                                .andExpect(jsonPath("$.upiQrProvider").value("SECONDARY"))
                                 .andExpect(jsonPath("$.total").value(100));
                 mockMvc.perform(get("/api/daily-closings/preview").session(session))
                                 .andExpect(status().isOk())
@@ -871,7 +1053,8 @@ class FinancialControllerTest {
                 mockMvc.perform(get("/api/history").session(session))
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$[0].cashAmount").value(30))
-                                .andExpect(jsonPath("$[0].onlineAmount").value(70));
+                                .andExpect(jsonPath("$[0].onlineAmount").value(70))
+                                .andExpect(jsonPath("$[0].upiQrProvider").value("SECONDARY"));
         }
 
         @Test
@@ -918,10 +1101,21 @@ class FinancialControllerTest {
                 var cashBill = Bill.createPaid("PP-CASH", "Table 1", PaymentMethod.CASH, Instant.now());
                 cashBill.addLine(menuItem, 1, new BigDecimal("120.00"));
                 billRepository.save(cashBill);
-                var onlineBill = Bill.createPaid("PP-ONLINE", "Outdoor 1", PaymentMethod.ONLINE, Instant.now());
-                onlineBill.addLine(menuItem, 2, new BigDecimal("120.00"));
-                billRepository.save(onlineBill);
-                expenseRepository.save(Expense.create("Vegetables", new BigDecimal("75.00"), "Owner", null));
+                var primaryQrBill = Bill.createPaid("PP-PRIMARY-QR", "Outdoor 1", PaymentMethod.ONLINE, Instant.now());
+                primaryQrBill.addLine(menuItem, 1, new BigDecimal("180.00"));
+                primaryQrBill.markPaid(PaymentMethod.ONLINE, Instant.now(), BigDecimal.ZERO,
+                                new BigDecimal("180.00"), UpiQrProvider.PRIMARY);
+                billRepository.save(primaryQrBill);
+                var secondaryQrBill = Bill.createPaid("PP-SECONDARY-QR", "Outdoor 2", PaymentMethod.ONLINE,
+                                Instant.now());
+                secondaryQrBill.addLine(menuItem, 1, new BigDecimal("60.00"));
+                secondaryQrBill.markPaid(PaymentMethod.ONLINE, Instant.now(), BigDecimal.ZERO,
+                                new BigDecimal("60.00"), UpiQrProvider.SECONDARY);
+                billRepository.save(secondaryQrBill);
+                expenseRepository.save(Expense.create("Rimo supplies", new BigDecimal("30.00"), "Rimo", null));
+                expenseRepository.save(Expense.create("Rjoe supplies", new BigDecimal("5.00"), "Rjoe", null));
+                expenseRepository.save(Expense.create("Rishi supplies", new BigDecimal("20.00"), "Rishi", null));
+                expenseRepository.save(Expense.create("Cash supplies", new BigDecimal("75.00"), "Cash", null));
                 var beforeStartBill = Bill.createPaid("PP-PRE-START", "Table 4", PaymentMethod.CASH,
                                 startedAt.minusSeconds(1));
                 beforeStartBill.addLine(menuItem, 1, new BigDecimal("900.00"));
@@ -936,12 +1130,38 @@ class FinancialControllerTest {
                                 .andExpect(jsonPath("$.endedAt").isNotEmpty())
                                 .andExpect(jsonPath("$.cashSales").value(120))
                                 .andExpect(jsonPath("$.onlineSales").value(240))
-                                .andExpect(jsonPath("$.profits").value(285))
+                                .andExpect(jsonPath("$.profits").value(230))
                                 .andExpect(jsonPath("$.refunds").value(0))
-                                .andExpect(jsonPath("$.expenses").value(75))
+                                .andExpect(jsonPath("$.expenses").value(130))
                                 .andExpect(jsonPath("$.revenue").value(360))
-                                .andExpect(jsonPath("$.paidOrderCount").value(2))
-                                .andExpect(jsonPath("$.expenseCount").value(1));
+                                .andExpect(jsonPath("$.paidOrderCount").value(3))
+                                .andExpect(jsonPath("$.expenseCount").value(4))
+                                .andExpect(jsonPath("$.individualTotals.length()").value(5))
+                                .andExpect(jsonPath("$.individualTotals[0].source").value("Rimo (Secondary QR)"))
+                                .andExpect(jsonPath("$.individualTotals[0].income").value(60))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(30))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(30))
+                                .andExpect(jsonPath("$.individualTotals[1].source").value("Rjoe"))
+                                .andExpect(jsonPath("$.individualTotals[1].income").value(0))
+                                .andExpect(jsonPath("$.individualTotals[1].difference").value(-5))
+                                .andExpect(jsonPath("$.individualTotals[2].source").value("Rishi (Primary QR)"))
+                                .andExpect(jsonPath("$.individualTotals[2].income").value(180))
+                                .andExpect(jsonPath("$.individualTotals[2].difference").value(160))
+                                .andExpect(jsonPath("$.individualTotals[3].source").value("Dinda"))
+                                .andExpect(jsonPath("$.individualTotals[3].income").value(0))
+                                .andExpect(jsonPath("$.individualTotals[3].expenses").value(0))
+                                .andExpect(jsonPath("$.individualTotals[4].source").value("Cash"))
+                                .andExpect(jsonPath("$.individualTotals[4].income").value(120))
+                                .andExpect(jsonPath("$.individualTotals[4].expenses").value(75))
+                                .andExpect(jsonPath("$.individualTotals[4].difference").value(45));
+
+                expenseRepository.save(Expense.create("Rimo cleaning", new BigDecimal("10.00"), "Rimo", null));
+                mockMvc.perform(get("/api/daily-closings/preview").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.expenses").value(140))
+                                .andExpect(jsonPath("$.profits").value(220))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(40))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(20));
 
                 mockMvc.perform(post("/api/daily-closings/end").session(ownerSession))
                                 .andExpect(status().isCreated())
@@ -949,12 +1169,14 @@ class FinancialControllerTest {
                                 .andExpect(jsonPath("$.startedAt").isNotEmpty())
                                 .andExpect(jsonPath("$.cashSales").value(120))
                                 .andExpect(jsonPath("$.onlineSales").value(240))
-                                .andExpect(jsonPath("$.profits").value(285))
+                                .andExpect(jsonPath("$.profits").value(220))
                                 .andExpect(jsonPath("$.refunds").value(0))
-                                .andExpect(jsonPath("$.expenses").value(75))
+                                .andExpect(jsonPath("$.expenses").value(140))
                                 .andExpect(jsonPath("$.revenue").value(360))
-                                .andExpect(jsonPath("$.paidOrderCount").value(2))
-                                .andExpect(jsonPath("$.expenseCount").value(1));
+                                .andExpect(jsonPath("$.paidOrderCount").value(3))
+                                .andExpect(jsonPath("$.expenseCount").value(5))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(40))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(20));
 
                 mockMvc.perform(get("/api/daily-closings/status").session(ownerSession))
                                 .andExpect(status().isOk())
@@ -967,7 +1189,130 @@ class FinancialControllerTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$[0].closingDate").value(businessDate))
                                 .andExpect(jsonPath("$[0].revenue").value(360))
-                                .andExpect(jsonPath("$[0].profits").value(285));
+                                .andExpect(jsonPath("$[0].profits").value(220))
+                                .andExpect(jsonPath("$[0].individualTotals.length()").value(5))
+                                .andExpect(jsonPath("$[0].individualTotals[2].source").value("Rishi (Primary QR)"));
+        }
+
+        @Test
+        void includesOnlyExpensesRecordedAfterBusinessDayStart() throws Exception {
+                var ownerSession = signIn();
+                var expenseDate = LocalDate.now(BusinessDay.TIME_ZONE).minusDays(1);
+                var expenseBeforeStart = expenseRepository.saveAndFlush(
+                                Expense.create("Late-night supplies", new BigDecimal("800.00"), "Rimo", null));
+                var secondExpenseBeforeStart = expenseRepository.saveAndFlush(
+                                Expense.create("Night delivery", new BigDecimal("716.00"), "Rimo", null));
+                var firstCreatedAt = expenseDate.atTime(0, 6).atZone(BusinessDay.TIME_ZONE).toInstant();
+                var secondCreatedAt = expenseDate.atTime(0, 12).atZone(BusinessDay.TIME_ZONE).toInstant();
+                jdbcTemplate.update("UPDATE expense SET created_at = ? WHERE id = ?",
+                                java.sql.Timestamp.from(firstCreatedAt),
+                                expenseBeforeStart.getId());
+                jdbcTemplate.update("UPDATE expense SET created_at = ? WHERE id = ?",
+                                java.sql.Timestamp.from(secondCreatedAt),
+                                secondExpenseBeforeStart.getId());
+                var startedAt = expenseDate.atTime(10, 27).atZone(BusinessDay.TIME_ZONE).toInstant();
+                var expenseAfterStart = expenseRepository.saveAndFlush(
+                                Expense.create("Morning supplies", new BigDecimal("50.00"), "Rimo", null));
+                var afterStartCreatedAt = startedAt.plusSeconds(60);
+                jdbcTemplate.update("UPDATE expense SET created_at = ? WHERE id = ?",
+                                java.sql.Timestamp.from(afterStartCreatedAt), expenseAfterStart.getId());
+                var state = businessDayStateRepository.findById(1).orElseThrow();
+                state.start(startedAt);
+                businessDayStateRepository.saveAndFlush(state);
+
+                org.junit.jupiter.api.Assertions.assertTrue(firstCreatedAt.isBefore(startedAt));
+                org.junit.jupiter.api.Assertions.assertTrue(secondCreatedAt.isBefore(startedAt));
+                org.junit.jupiter.api.Assertions.assertTrue(afterStartCreatedAt.isAfter(startedAt));
+                mockMvc.perform(get("/api/daily-closings/preview").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.closingDate").value(expenseDate.toString()))
+                                .andExpect(jsonPath("$.expenses").value(50))
+                                .andExpect(jsonPath("$.expenseCount").value(1))
+                                .andExpect(jsonPath("$.individualTotals[0].source").value("Rimo (Secondary QR)"))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(50))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(-50));
+
+                mockMvc.perform(post("/api/daily-closings/end").session(ownerSession))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.expenses").value(50))
+                                .andExpect(jsonPath("$.expenseCount").value(1))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(50))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(-50));
+        }
+
+        @Test
+        void assignsGapExpensesToTheNextBusinessDayAndTracksEdits() throws Exception {
+                var ownerSession = signIn();
+                var nextStartedAt = Instant.now().minusSeconds(1);
+                var nextBusinessDate = BusinessDay.dateOf(nextStartedAt);
+                var previousDate = nextBusinessDate.minusDays(1);
+                var previousStartedAt = previousDate.atTime(10, 0).atZone(BusinessDay.TIME_ZONE).toInstant();
+                var previousClosedAt = nextStartedAt.minusSeconds(120);
+                var previousClosing = dailyClosingRepository.saveAndFlush(DailyClosing.create(
+                                previousDate,
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                0,
+                                0,
+                                previousStartedAt,
+                                previousClosedAt));
+
+                mockMvc.perform(post("/api/expenses")
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"After-close supplies","amount":100,"addedBy":"Rimo"}
+                                                """))
+                                .andExpect(status().isCreated());
+
+                var savedExpense = expenseRepository.findAllByOrderByCreatedAtDesc().get(0);
+                var gapCreatedAt = nextStartedAt.minusSeconds(60);
+                jdbcTemplate.update("UPDATE expense SET created_at = ? WHERE id = ?",
+                                java.sql.Timestamp.from(gapCreatedAt), savedExpense.getId());
+                var businessDayState = businessDayStateRepository.findById(1).orElseThrow();
+                businessDayState.start(nextStartedAt);
+                businessDayStateRepository.saveAndFlush(businessDayState);
+
+                mockMvc.perform(get("/api/daily-closings").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$[0].expenses").value(0));
+
+                mockMvc.perform(get("/api/daily-closings/preview").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.closingDate").value(nextBusinessDate.toString()))
+                                .andExpect(jsonPath("$.expenses").value(100))
+                                .andExpect(jsonPath("$.expenseCount").value(1))
+                                .andExpect(jsonPath("$.individualTotals[0].source").value("Rimo (Secondary QR)"))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(100))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(-100));
+
+                mockMvc.perform(post("/api/daily-closings/end").session(ownerSession))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.expenses").value(100))
+                                .andExpect(jsonPath("$.expenseCount").value(1))
+                                .andExpect(jsonPath("$.individualTotals[0].expenses").value(100));
+
+                mockMvc.perform(put("/api/expenses/{expenseId}", savedExpense.getId())
+                                .session(ownerSession)
+                                .contentType(APPLICATION_JSON)
+                                .content("""
+                                                {"title":"After-close supplies","amount":75,"addedBy":"Cash"}
+                                                """))
+                                .andExpect(status().isOk());
+
+                mockMvc.perform(get("/api/daily-closings").session(ownerSession))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$[0].expenses").value(75))
+                                .andExpect(jsonPath("$[0].profits").value(-75))
+                                .andExpect(jsonPath("$[0].individualTotals[0].expenses").value(0))
+                                .andExpect(jsonPath("$[0].individualTotals[0].difference").value(0))
+                                .andExpect(jsonPath("$[0].individualTotals[4].expenses").value(75))
+                                .andExpect(jsonPath("$[0].individualTotals[4].difference").value(-75))
+                                .andExpect(jsonPath("$[1].id").value(previousClosing.getId()))
+                                .andExpect(jsonPath("$[1].expenses").value(0));
         }
 
         @Test
@@ -1011,8 +1356,10 @@ class FinancialControllerTest {
                                 "Crisp dosa with potato filling",
                                 BigDecimal.ZERO,
                                 new BigDecimal("120.00")));
-                var paidBill = Bill.createPaid("PP-REFUND", "Table 1", PaymentMethod.CASH, Instant.now());
+                var paidBill = Bill.createPaid("PP-REFUND", "Table 1", PaymentMethod.SPLIT, Instant.now());
                 paidBill.addLine(menuItem, 1, new BigDecimal("120.00"));
+                paidBill.markPaid(PaymentMethod.SPLIT, Instant.now(), new BigDecimal("40.00"),
+                                new BigDecimal("80.00"), UpiQrProvider.SECONDARY);
                 var savedBill = billRepository.save(paidBill);
                 dailyClosingRepository.save(DailyClosing.create(
                                 businessDate.minusDays(1),
@@ -1055,7 +1402,15 @@ class FinancialControllerTest {
                                 .andExpect(jsonPath("$.profits").value(0))
                                 .andExpect(jsonPath("$.refunds").value(120))
                                 .andExpect(jsonPath("$.expenses").value(0))
-                                .andExpect(jsonPath("$.revenue").value(120));
+                                .andExpect(jsonPath("$.revenue").value(120))
+                                .andExpect(jsonPath("$.individualTotals[0].source").value("Rimo (Secondary QR)"))
+                                .andExpect(jsonPath("$.individualTotals[0].income").value(80))
+                                .andExpect(jsonPath("$.individualTotals[0].refunds").value(80))
+                                .andExpect(jsonPath("$.individualTotals[0].difference").value(0))
+                                .andExpect(jsonPath("$.individualTotals[4].source").value("Cash"))
+                                .andExpect(jsonPath("$.individualTotals[4].income").value(40))
+                                .andExpect(jsonPath("$.individualTotals[4].refunds").value(40))
+                                .andExpect(jsonPath("$.individualTotals[4].difference").value(0));
 
                 mockMvc.perform(get("/api/daily-closings").session(ownerSession))
                                 .andExpect(status().isOk())

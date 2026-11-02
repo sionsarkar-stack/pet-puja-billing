@@ -3,12 +3,18 @@ package com.petpuja.billing.billing;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 
 @Entity
@@ -51,6 +57,10 @@ public class DailyClosing {
 
     @Column(name = "started_at")
     private Instant startedAt;
+
+    @OneToMany(mappedBy = "dailyClosing", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OrderBy("position ASC")
+    private List<DailyClosingIndividualTotal> individualTotals = new ArrayList<>();
 
     protected DailyClosing() {
     }
@@ -154,4 +164,53 @@ public class DailyClosing {
     public Instant getStartedAt() {
         return startedAt;
     }
+
+    public List<DailyClosingIndividualTotal> getIndividualTotals() {
+        return individualTotals;
+    }
+
+    public void replaceIndividualTotals(List<DailyClosingIndividualTotal> individualTotals) {
+        this.individualTotals.clear();
+        this.individualTotals.addAll(individualTotals);
+    }
+
+    public void addGapExpense(String source, BigDecimal amount) {
+        expenses = expenses.add(amount);
+        profits = profits.subtract(amount);
+        expenseCount++;
+        adjustIndividualExpense(source, amount);
+    }
+
+    public void updateGapExpense(String previousSource, BigDecimal previousAmount, String nextSource,
+            BigDecimal nextAmount) {
+        var amountDelta = nextAmount.subtract(previousAmount);
+        expenses = expenses.add(amountDelta);
+        profits = profits.subtract(amountDelta);
+        adjustIndividualExpense(previousSource, previousAmount.negate());
+        adjustIndividualExpense(nextSource, nextAmount);
+    }
+
+    private void adjustIndividualExpense(String source, BigDecimal amountDelta) {
+        if (individualTotals.isEmpty() || amountDelta.signum() == 0)
+            return;
+
+        var total = individualTotals.stream()
+                .filter(existing -> existing.getSource().equals(source))
+                .findFirst()
+                .orElse(null);
+        if (total != null) {
+            total.adjustExpense(amountDelta);
+            return;
+        }
+
+        if (amountDelta.signum() < 0)
+            return;
+        var position = individualTotals.stream()
+                .mapToInt(DailyClosingIndividualTotal::getPosition)
+                .max()
+                .orElse(-1) + 1;
+        individualTotals.add(DailyClosingIndividualTotal.create(this, source, position, BigDecimal.ZERO,
+                BigDecimal.ZERO, amountDelta, amountDelta.negate()));
+    }
+
 }

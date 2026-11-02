@@ -116,6 +116,7 @@ function BalanceSheetManager() {
     const [toDate, setToDate] = useState('')
     const [exportMessage, setExportMessage] = useState<ExportMessage | null>(null)
     const [isLoading, setIsLoading] = useState(true)
+    const [refreshKey, setRefreshKey] = useState(0)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
     useEffect(() => {
@@ -159,7 +160,13 @@ function BalanceSheetManager() {
         void loadBalanceSheet()
 
         return () => controller.abort()
-    }, [])
+    }, [refreshKey])
+
+    function refreshBalanceSheet() {
+        setErrorMessage(null)
+        setIsLoading(true)
+        setRefreshKey((currentKey) => currentKey + 1)
+    }
 
     function exportBalanceSheet() {
         if (fromDate && toDate && fromDate > toDate) {
@@ -260,9 +267,20 @@ function BalanceSheetManager() {
     return (
         <div className="balance-workspace">
             <header className="balance-page-heading">
-                <div>
-                    <p className="eyebrow">Balance sheet</p>
-                    <h1>Financial position</h1>
+                <div className="balance-heading-actions">
+                    <div>
+                        <p className="eyebrow">Balance sheet</p>
+                        <h1>Financial position</h1>
+                    </div>
+                    <button
+                        aria-label="Refresh balance sheet"
+                        className="balance-refresh-button"
+                        disabled={isLoading}
+                        onClick={refreshBalanceSheet}
+                        type="button"
+                    >
+                        {isLoading ? 'Refreshing...' : 'Refresh'}
+                    </button>
                 </div>
                 <p>Revenue is paid sales; profits are revenue less refunds and recorded expenses.</p>
             </header>
